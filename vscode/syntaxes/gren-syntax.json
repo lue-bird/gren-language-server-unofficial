@@ -1,0 +1,750 @@
+{
+  "fileTypes": [
+    "gren"
+  ],
+  "name": "gren",
+  "scopeName": "source.gren",
+  "patterns": [
+    {
+      "include": "#import"
+    },
+    {
+      "include": "#module"
+    },
+    {
+      "include": "#debug"
+    },
+    {
+      "include": "#comments"
+    },
+    {
+      "match": "\\b(_)\\b",
+      "name": "keyword.unused.gren"
+    },
+    {
+      "include": "#type-signature"
+    },
+    {
+      "include": "#type-declaration"
+    },
+    {
+      "include": "#type-alias-declaration"
+    },
+    {
+      "include": "#string-triple"
+    },
+    {
+      "include": "#string-quote"
+    },
+    {
+      "include": "#char"
+    },
+    {
+      "comment": "Floats are always decimal",
+      "match": "\\b([0-9]+\\.[0-9]+([eE][+-]?[0-9]+)?|[0-9]+[eE][+-]?[0-9]+)\\b",
+      "name": "constant.numeric.float.gren"
+    },
+    {
+      "match": "\\b([0-9]+)\\b",
+      "name": "constant.numeric.gren"
+    },
+    {
+      "match": "\\b(0x[0-9a-fA-F]+)\\b",
+      "name": "constant.numeric.gren"
+    },
+    {
+      "include": "#glsl"
+    },
+    {
+      "include": "#record-prefix"
+    },
+    {
+      "include": "#module-prefix"
+    },
+    {
+      "include": "#constructor"
+    },
+    {
+      "name": "meta.record.field.update.gren",
+      "match": "(\\{)\\s+([a-z][a-zA-Z0-9_]*)\\s+(\\|)\\s+([a-z][a-zA-Z0-9_]*)",
+      "captures": {
+        "1": {
+          "name": "punctuation.bracket.gren"
+        },
+        "2": {
+          "name": "record.name.gren"
+        },
+        "3": {
+          "name": "keyword.pipe.gren"
+        },
+        "4": {
+          "name": "entity.name.record.field.gren"
+        }
+      }
+    },
+    {
+      "name": "meta.record.field.update.gren",
+      "match": "(\\|)\\s+([a-z][a-zA-Z0-9_]*)\\s+(\\=)",
+      "captures": {
+        "1": {
+          "name": "keyword.pipe.gren"
+        },
+        "2": {
+          "name": "entity.name.record.field.gren"
+        },
+        "3": {
+          "name": "keyword.operator.assignment.gren"
+        }
+      }
+    },
+    {
+      "name": "meta.record.field.update.gren",
+      "match": "(\\{)\\s+([a-z][a-zA-Z0-9_]*)\\s+$",
+      "captures": {
+        "1": {
+          "name": "punctuation.bracket.gren"
+        },
+        "2": {
+          "name": "record.name.gren"
+        }
+      }
+    },
+    {
+      "name": "meta.record.field.gren",
+      "match": "(\\{)\\s+([a-z][a-zA-Z0-9_]*)\\s+(\\=)",
+      "captures": {
+        "1": {
+          "name": "punctuation.bracket.gren"
+        },
+        "2": {
+          "name": "entity.name.record.field.gren"
+        },
+        "3": {
+          "name": "keyword.operator.assignment.gren"
+        }
+      }
+    },
+    {
+      "name": "meta.record.field.gren",
+      "match": "(,)\\s+([a-z][a-zA-Z0-9_]*)\\s+(\\=)",
+      "captures": {
+        "1": {
+          "name": "punctuation.separator.comma.gren"
+        },
+        "2": {
+          "name": "entity.name.record.field.gren"
+        },
+        "3": {
+          "name": "keyword.operator.assignment.gren"
+        }
+      }
+    },
+    {
+      "match": "(\\}|\\{)",
+      "name": "punctuation.bracket.gren"
+    },
+    {
+      "include": "#unit"
+    },
+    {
+      "include": "#comma"
+    },
+    {
+      "include": "#parens"
+    },
+    {
+      "match": "(->)",
+      "name": "keyword.operator.arrow.gren"
+    },
+    {
+      "include": "#infix_op"
+    },
+    {
+      "match": "(\\=|\\:|\\||\\\\)",
+      "name": "keyword.other.gren"
+    },
+    {
+      "match": "\\b(type|as|port|exposing|alias|infixl|infixr|infix)\\s+",
+      "name": "keyword.other.gren"
+    },
+    {
+      "match": "\\b(if|then|else|case|of|let|in)\\s+",
+      "name": "keyword.control.gren"
+    },
+    {
+      "include": "#record-accessor"
+    },
+    {
+      "include": "#top_level_value"
+    },
+    {
+      "include": "#value"
+    },
+    {
+      "include": "#period"
+    },
+    {
+      "include": "#square_brackets"
+    }
+  ],
+  "repository": {
+    "comma": {
+      "match": "(,)",
+      "name": "punctuation.separator.comma.gren"
+    },
+    "parens": {
+      "match": "(\\(|\\))",
+      "name": "punctuation.parens.gren"
+    },
+    "block_comment": {
+      "applyEndPatternLast": 1,
+      "begin": "\\{-(?!#)",
+      "captures": {
+        "0": {
+          "name": "punctuation.definition.comment.gren"
+        }
+      },
+      "end": "-\\}",
+      "name": "comment.block.gren",
+      "patterns": [
+        {
+          "include": "#block_comment"
+        }
+      ]
+    },
+    "comments": {
+      "patterns": [
+        {
+          "captures": {
+            "1": {
+              "name": "punctuation.definition.comment.gren"
+            }
+          },
+          "begin": "--",
+          "end": "$",
+          "name": "comment.line.double-dash.gren"
+        },
+        {
+          "include": "#block_comment"
+        }
+      ]
+    },
+    "import": {
+      "name": "meta.import.gren",
+      "begin": "^\\b(import)\\s+",
+      "beginCaptures": {
+        "1": {
+          "name": "keyword.control.import.gren"
+        }
+      },
+      "end": "\\n(?!\\s)",
+      "patterns": [
+        {
+          "match": "(as|exposing)",
+          "name": "keyword.control.gren"
+        },
+        {
+          "include": "#module_chunk"
+        },
+        {
+          "include": "#period"
+        },
+        {
+          "match": "\\s+",
+          "name": "punctuation.spaces.gren"
+        },
+        {
+          "include": "#module-exports"
+        }
+      ]
+    },
+    "module": {
+      "begin": "^\\b((port |effect )?module)\\s+",
+      "beginCaptures": {
+        "1": {
+          "name": "keyword.other.gren"
+        }
+      },
+      "end": "\\n(?!\\s)",
+      "endCaptures": {
+        "1": {
+          "name": "keyword.other.gren"
+        }
+      },
+      "name": "meta.declaration.module.gren",
+      "patterns": [
+        {
+          "include": "#module_chunk"
+        },
+        {
+          "include": "#period"
+        },
+        {
+          "match": "(exposing)",
+          "name": "keyword.other.gren"
+        },
+        {
+          "match": "\\s+",
+          "name": "punctuation.spaces.gren"
+        },
+        {
+          "include": "#module-exports"
+        }
+      ]
+    },
+    "string-triple": {
+      "name": "string.quoted.triple.gren",
+      "begin": "\"\"\"",
+      "beginCaptures": {
+        "0": {
+          "name": "punctuation.definition.string.begin.gren"
+        }
+      },
+      "end": "\"\"\"",
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.definition.string.end.gren"
+        }
+      },
+      "patterns": [
+        {
+          "match": "\\\\(NUL|SOH|STX|ETX|EOT|ENQ|ACK|BEL|BS|HT|LF|VT|FF|CR|SO|SI|DLE|DC1|DC2|DC3|DC4|NAK|SYN|ETB|CAN|EM|SUB|ESC|FS|GS|RS|US|SP|DEL|[abfnrtv\\\\\\\"'\\&]|x[0-9a-fA-F]{1,5})",
+          "name": "constant.character.escape.gren"
+        },
+        {
+          "match": "\\^[A-Z@\\[\\]\\\\\\^_]",
+          "name": "constant.character.escape.control.gren"
+        }
+      ]
+    },
+    "string-quote": {
+      "name": "string.quoted.double.gren",
+      "begin": "\"",
+      "beginCaptures": {
+        "0": {
+          "name": "punctuation.definition.string.begin.gren"
+        }
+      },
+      "end": "\"",
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.definition.string.end.gren"
+        }
+      },
+      "patterns": [
+        {
+          "match": "\\\\(NUL|SOH|STX|ETX|EOT|ENQ|ACK|BEL|BS|HT|LF|VT|FF|CR|SO|SI|DLE|DC1|DC2|DC3|DC4|NAK|SYN|ETB|CAN|EM|SUB|ESC|FS|GS|RS|US|SP|DEL|[abfnrtv\\\\\\\"'\\&]|x[0-9a-fA-F]{1,5})",
+          "name": "constant.character.escape.gren"
+        },
+        {
+          "match": "\\^[A-Z@\\[\\]\\\\\\^_]",
+          "name": "constant.character.escape.control.gren"
+        }
+      ]
+    },
+    "char": {
+      "name": "string.quoted.single.gren",
+      "begin": "'",
+      "beginCaptures": {
+        "0": {
+          "name": "punctuation.definition.char.begin.gren"
+        }
+      },
+      "end": "'",
+      "endCaptures": {
+        "0": {
+          "name": "punctuation.definition.char.end.gren"
+        }
+      },
+      "patterns": [
+        {
+          "match": "\\\\(NUL|SOH|STX|ETX|EOT|ENQ|ACK|BEL|BS|HT|LF|VT|FF|CR|SO|SI|DLE|DC1|DC2|DC3|DC4|NAK|SYN|ETB|CAN|EM|SUB|ESC|FS|GS|RS|US|SP|DEL|[abfnrtv\\\\\\\"'\\&]|x[0-9a-fA-F]{1,5})",
+          "name": "constant.character.escape.gren"
+        },
+        {
+          "match": "\\^[A-Z@\\[\\]\\\\\\^_]",
+          "name": "constant.character.escape.control.gren"
+        }
+      ]
+    },
+    "debug": {
+      "match": "\\b(Debug)\\b",
+      "name": "invalid.illegal.debug.gren"
+    },
+    "module-exports": {
+      "begin": "(\\()",
+      "beginCaptures": {
+        "1": {
+          "name": "punctuation.parens.module-export.gren"
+        }
+      },
+      "end": "(\\))",
+      "endCaptures": {
+        "1": {
+          "name": "punctuation.parens.module-export.gren"
+        }
+      },
+      "name": "meta.declaration.exports.gren",
+      "patterns": [
+        {
+          "match": "\\b[a-z][a-zA-Z_'0-9]*",
+          "name": "entity.name.function.gren"
+        },
+        {
+          "match": "\\b[A-Z][A-Za-z_'0-9]*",
+          "name": "storage.type.gren"
+        },
+        {
+          "match": ",",
+          "name": "punctuation.separator.comma.gren"
+        },
+        {
+          "match": "\\s+",
+          "name": "punctuation.spaces.gren"
+        },
+        {
+          "include": "#comma"
+        },
+        {
+          "match": "\\(\\.\\.\\)",
+          "name": "punctuation.parens.ellipses.gren"
+        },
+        {
+          "match": "\\.\\.",
+          "name": "punctuation.parens.ellipses.gren"
+        },
+        {
+          "include": "#infix_op"
+        },
+        {
+          "comment": "So named because I don't know what to call this.",
+          "match": "\\(.*?\\)",
+          "name": "meta.other.unknown.gren"
+        }
+      ]
+    },
+    "module_chunk": {
+      "match": "[A-Z][a-zA-Z0-9_]*",
+      "name": "support.module.gren"
+    },
+    "period": {
+      "match": "[.]",
+      "name": "keyword.other.period.gren"
+    },
+    "square_brackets": {
+      "match": "[\\[\\]]",
+      "name": "punctuation.definition.list.gren"
+    },
+    "record-prefix": {
+      "match": "([a-z][a-zA-Z0-9_]*)(\\.)([a-z][a-zA-Z0-9_]*)",
+      "name": "record.accessor.gren",
+      "captures": {
+        "1": {
+          "name": "record.name.gren"
+        },
+        "2": {
+          "name": "keyword.other.period.gren"
+        },
+        "3": {
+          "name": "entity.name.record.field.accessor.gren"
+        }
+      }
+    },
+    "module-prefix": {
+      "match": "([A-Z][a-zA-Z0-9_]*)(\\.)",
+      "name": "meta.module.name.gren",
+      "captures": {
+        "1": {
+          "name": "support.module.gren"
+        },
+        "2": {
+          "name": "keyword.other.period.gren"
+        }
+      }
+    },
+    "constructor": {
+      "match": "\\b[A-Z][a-zA-Z0-9_]*\\b",
+      "name": "constant.type-constructor.gren"
+    },
+    "value": {
+      "match": "\\b[a-z][a-zA-Z0-9_]*\\b",
+      "name": "meta.value.gren"
+    },
+    "unit": {
+      "match": "\\(\\)",
+      "name": "constant.unit.gren"
+    },
+    "top_level_value": {
+      "match": "^[a-z][a-zA-Z0-9_]*\\b",
+      "name": "entity.name.function.top_level.gren"
+    },
+    "record-accessor": {
+      "match": "(\\.)([a-z][a-zA-Z0-9_]*)",
+      "name": "meta.record.accessor",
+      "captures": {
+        "1": {
+          "name": "keyword.other.period.gren"
+        },
+        "2": {
+          "name": "entity.name.record.field.accessor.gren"
+        }
+      }
+    },
+    "infix_op": {
+      "match": "(</>|<\\?>|<\\||<=|\\|\\||&&|>=|\\|>|\\|=|\\|\\.|\\+\\+|::|/=|==|//|>>|<<|<|>|\\^|\\+|-|/|\\*)",
+      "name": "keyword.operator.gren"
+    },
+    "type-declaration": {
+      "begin": "^(type\\s+)([A-Z][a-zA-Z0-9_']*)\\s+",
+      "beginCaptures": {
+        "1": {
+          "name": "keyword.type.gren"
+        },
+        "2": {
+          "name": "storage.type.gren"
+        }
+      },
+      "end": "^(?=\\S)",
+      "name": "meta.function.type-declaration.gren",
+      "patterns": [
+        {
+          "name": "meta.record.field.gren",
+          "match": "^\\s*([A-Z][a-zA-Z0-9_]*)\\b",
+          "captures": {
+            "1": {
+              "name": "constant.type-constructor.gren"
+            }
+          }
+        },
+        {
+          "match": "\\s+",
+          "name": "punctuation.spaces.gren"
+        },
+        {
+          "name": "meta.record.field.gren",
+          "match": "(\\=|\\|)\\s+([A-Z][a-zA-Z0-9_]*)\\b",
+          "captures": {
+            "1": {
+              "name": "keyword.operator.assignment.gren"
+            },
+            "2": {
+              "name": "constant.type-constructor.gren"
+            }
+          }
+        },
+        {
+          "match": "\\=",
+          "name": "keyword.operator.assignment.gren"
+        },
+        {
+          "match": "\\-\\>",
+          "name": "keyword.operator.arrow.gren"
+        },
+        {
+          "include": "#module-prefix"
+        },
+        {
+          "match": "\\b[a-z][a-zA-Z0-9_]*\\b",
+          "name": "variable.type.gren"
+        },
+        {
+          "match": "\\b[A-Z][a-zA-Z0-9_]*\\b",
+          "name": "storage.type.gren"
+        },
+        {
+          "include": "#comments"
+        },
+        {
+          "include": "#type-record"
+        }
+      ]
+    },
+    "type-alias-declaration": {
+      "begin": "^(type\\s+)(alias\\s+)([A-Z][a-zA-Z0-9_']*)\\s+",
+      "beginCaptures": {
+        "1": {
+          "name": "keyword.type.gren"
+        },
+        "2": {
+          "name": "keyword.type-alias.gren"
+        },
+        "3": {
+          "name": "storage.type.gren"
+        }
+      },
+      "end": "^(?=\\S)",
+      "name": "meta.function.type-declaration.gren",
+      "patterns": [
+        {
+          "match": "\\n\\s+",
+          "name": "punctuation.spaces.gren"
+        },
+        {
+          "match": "\\=",
+          "name": "keyword.operator.assignment.gren"
+        },
+        {
+          "include": "#module-prefix"
+        },
+        {
+          "match": "\\b[A-Z][a-zA-Z0-9_]*\\b",
+          "name": "storage.type.gren"
+        },
+        {
+          "match": "\\b[a-z][a-zA-Z0-9_]*\\b",
+          "name": "variable.type.gren"
+        },
+        {
+          "include": "#comments"
+        },
+        {
+          "include": "#type-record"
+        }
+      ]
+    },
+    "type-record": {
+      "begin": "(\\{)",
+      "beginCaptures": {
+        "1": {
+          "name": "punctuation.section.braces.begin"
+        }
+      },
+      "end": "(\\})",
+      "endCaptures": {
+        "1": {
+          "name": "punctuation.section.braces.end"
+        }
+      },
+      "name": "meta.function.type-record.gren",
+      "patterns": [
+        {
+          "match": "\\s+",
+          "name": "punctuation.spaces.gren"
+        },
+        {
+          "match": "->",
+          "name": "keyword.operator.arrow.gren"
+        },
+        {
+          "name": "meta.record.field.gren",
+          "match": "([a-z][a-zA-Z0-9_]*)\\s+(\\:)",
+          "captures": {
+            "1": {
+              "name": "entity.name.record.field.gren"
+            },
+            "2": {
+              "name": "keyword.other.gren"
+            }
+          }
+        },
+        {
+          "match": "\\,",
+          "name": "punctuation.separator.comma.gren"
+        },
+        {
+          "include": "#module-prefix"
+        },
+        {
+          "match": "\\b[a-z][a-zA-Z0-9_]*\\b",
+          "name": "variable.type.gren"
+        },
+        {
+          "match": "\\b[A-Z][a-zA-Z0-9_]*\\b",
+          "name": "storage.type.gren"
+        },
+        {
+          "include": "#comments"
+        },
+        {
+          "include": "#type-record"
+        }
+      ]
+    },
+    "type-signature": {
+      "begin": "^(port\\s+)?([a-z_][a-zA-Z0-9_']*)\\s+(\\:)",
+      "beginCaptures": {
+        "1": {
+          "name": "keyword.other.port.gren"
+        },
+        "2": {
+          "name": "entity.name.function.gren"
+        },
+        "3": {
+          "name": "keyword.other.colon.gren"
+        }
+      },
+      "end": "((^(?=[a-z]))|^$)",
+      "name": "meta.function.type-declaration.gren",
+      "patterns": [
+        {
+          "include": "#type-signature-chunk"
+        }
+      ]
+    },
+    "type-signature-chunk": {
+      "patterns": [
+        {
+          "match": "->",
+          "name": "keyword.operator.arrow.gren"
+        },
+        {
+          "match": "\\s+",
+          "name": "punctuation.spaces.gren"
+        },
+        {
+          "include": "#module-prefix"
+        },
+        {
+          "match": "\\b[a-z][a-zA-Z0-9_]*\\b",
+          "name": "variable.type.gren"
+        },
+        {
+          "match": "\\b[A-Z][a-zA-Z0-9_]*\\b",
+          "name": "storage.type.gren"
+        },
+        {
+          "match": "\\(\\)",
+          "name": "constant.unit.gren"
+        },
+        {
+          "include": "#comma"
+        },
+        {
+          "include": "#parens"
+        },
+        {
+          "include": "#comments"
+        },
+        {
+          "include": "#type-record"
+        }
+      ]
+    },
+    "glsl": {
+      "begin": "(\\[)(glsl)(\\|)",
+      "beginCaptures": {
+        "1": {
+          "name": "entity.glsl.bracket.gren"
+        },
+        "2": {
+          "name": "entity.glsl.name.gren"
+        },
+        "3": {
+          "name": "entity.glsl.bracket.gren"
+        }
+      },
+      "end": "(\\|\\])",
+      "endCaptures": {
+        "1": {
+          "name": "entity.glsl.bracket.gren"
+        }
+      },
+      "name": "meta.embedded.block.glsl",
+      "patterns": [
+        {
+          "include": "source.glsl"
+        }
+      ]
+    }
+  }
+}

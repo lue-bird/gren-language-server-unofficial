@@ -1,0 +1,99 @@
+{
+  "name": "gren-language-server-unofficial",
+  "displayName": "gren",
+  "description": "language server for gren, in rust",
+  "author": "lue_bird",
+  "icon": "images/icon.png",
+  "license": "MIT",
+  "version": "0.0.1",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/lue-bird/gren-language-server-unofficial"
+  },
+  "categories": [
+    "Programming Languages"
+  ],
+  "keywords": [
+    "gren"
+  ],
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "activationEvents": [
+    "workspaceContains:**/gren.json"
+  ],
+  "main": "./out/extension",
+  "contributes": {
+    "languages": [
+      {
+        "id": "gren",
+        "extensions": [
+          ".gren"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "scopeName": "markdown.gren.codeblock",
+        "path": "./syntaxes/codeblock.json",
+        "injectTo": [
+          "text.html.markdown"
+        ],
+        "embeddedLanguages": {
+          "meta.embedded.block.gren": "gren"
+        }
+      },
+      {
+        "language": "gren",
+        "scopeName": "source.gren",
+        "path": "./syntaxes/gren-syntax.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "gren.commands.restart",
+        "title": "restart gren-language-server-unofficial",
+        "category": "gren"
+      }
+    ],
+    "configuration": {
+      "type": "object",
+      "title": "gren",
+      "properties": {
+        "gren-language-server-unofficial.grenPath": {
+          "scope": "window",
+          "type": "string",
+          "default": "",
+          "description": "compiler executable, default gren. Should be empty by default."
+        },
+        "gren-language-server-unofficial.grenFormatPath": {
+          "scope": "window",
+          "type": "string",
+          "default": "",
+          "description": "test runner executable, default gren-test. Should be empty by default."
+        },
+        "gren-language-server-unofficial.grenTestPath": {
+          "scope": "window",
+          "type": "string",
+          "default": "",
+          "description": "formatter executable, default gren-format. \"builtin\" is a fast rust formatter that is mostly but not fully compatible. Should be empty by default."
+        }
+      }
+    }
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.10.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^3.7.1",
+    "esbuild": "^0.27.0",
+    "typescript": "5.3.3"
+  },
+  "scripts": {
+    "compile": "tsc -p . --noEmit && esbuild --platform=node --bundle extension.js --external:vscode --minify --outfile=out/extension.js",
+    "package": "npm install && npm run compile && vsce package"
+  }
+}

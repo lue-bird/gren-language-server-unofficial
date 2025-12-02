@@ -1,0 +1,16 @@
+target
+Cargo.lock
+package-lock.json
+gren-stuff
+node_modules
+.build
+dist
+gren.rs
+grenMain.js
+
+zombie
+
+# for experimentation
+perf.data
+testing/
+run-profiling.sh
