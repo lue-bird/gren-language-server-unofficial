@@ -7593,7 +7593,7 @@ struct GrenSyntaxTypeField {
 
 #[derive(Clone, Debug, PartialEq)]
 enum GrenSyntaxPattern {
-    Ignored,
+    Ignored(Option<Box<str>>),
     Char(Option<char>),
     Int {
         base: GrenSyntaxIntBase,
@@ -9262,8 +9262,11 @@ fn gren_syntax_pattern_not_parenthesized_into(
     pattern_node: GrenSyntaxNode<&GrenSyntaxPattern>,
 ) {
     match pattern_node.value {
-        GrenSyntaxPattern::Ignored => {
+        GrenSyntaxPattern::Ignored(maybe_name) => {
             so_far.push('_');
+            if let Some(name) = maybe_name {
+                so_far.push_str(name);
+            }
         }
         GrenSyntaxPattern::Char(maybe_char) => gren_char_into(so_far, *maybe_char),
         GrenSyntaxPattern::Int {
@@ -12739,7 +12742,7 @@ fn gren_syntax_pattern_find_reference_at_position<'a>(
             position,
         ),
         GrenSyntaxPattern::Char(_) => None,
-        GrenSyntaxPattern::Ignored => None,
+        GrenSyntaxPattern::Ignored(_) => None,
         GrenSyntaxPattern::Int { .. } => None,
         GrenSyntaxPattern::Parenthesized(maybe_in_parens) => {
             maybe_in_parens.as_ref().and_then(|in_parens| {
@@ -14432,7 +14435,7 @@ fn gren_syntax_pattern_uses_of_reference_into(
             );
         }
         GrenSyntaxPattern::Char(_) => {}
-        GrenSyntaxPattern::Ignored => {}
+        GrenSyntaxPattern::Ignored(_) => {}
         GrenSyntaxPattern::Int { .. } => {}
         GrenSyntaxPattern::Parenthesized(maybe_in_parens) => {
             if let Some(in_parens) = maybe_in_parens {
@@ -14545,7 +14548,7 @@ fn gren_syntax_pattern_bindings_into<'a>(
             }
         }
         GrenSyntaxPattern::Char(_) => {}
-        GrenSyntaxPattern::Ignored => {}
+        GrenSyntaxPattern::Ignored(_) => {}
         GrenSyntaxPattern::Int { .. } => {}
         GrenSyntaxPattern::Parenthesized(maybe_in_parens) => {
             if let Some(in_parens) = maybe_in_parens {
@@ -15318,12 +15321,32 @@ fn gren_syntax_highlight_pattern_into(
                 value: GrenSyntaxHighlightKind::String,
             });
         }
-        GrenSyntaxPattern::Ignored => {
-            highlighted_so_far.push(GrenSyntaxNode {
-                range: gren_syntax_pattern_node.range,
-                value: GrenSyntaxHighlightKind::KeySymbol,
-            });
-        }
+        GrenSyntaxPattern::Ignored(maybe_name) => match maybe_name {
+            None => {
+                highlighted_so_far.push(GrenSyntaxNode {
+                    range: gren_syntax_pattern_node.range,
+                    value: GrenSyntaxHighlightKind::KeySymbol,
+                });
+            }
+            Some(_) => {
+                let name_start: lsp_types::Position =
+                    lsp_position_add_characters(gren_syntax_pattern_node.range.start, 1);
+                highlighted_so_far.push(GrenSyntaxNode {
+                    range: lsp_types::Range {
+                        start: gren_syntax_pattern_node.range.start,
+                        end: name_start,
+                    },
+                    value: GrenSyntaxHighlightKind::KeySymbol,
+                });
+                highlighted_so_far.push(GrenSyntaxNode {
+                    range: lsp_types::Range {
+                        start: name_start,
+                        end: gren_syntax_pattern_node.range.end,
+                    },
+                    value: GrenSyntaxHighlightKind::Comment,
+                });
+            }
+        },
         GrenSyntaxPattern::Int { .. } => {
             highlighted_so_far.push(GrenSyntaxNode {
                 range: gren_syntax_pattern_node.range,
@@ -17139,7 +17162,7 @@ fn parse_gren_syntax_pattern_not_as_or_cons_node(
 ) -> Option<GrenSyntaxNode<GrenSyntaxPattern>> {
     parse_gren_syntax_pattern_construct_node(state).or_else(|| {
         let start_position = state.position;
-        parse_symbol_as(state, "_", GrenSyntaxPattern::Ignored)
+        parse_gren_syntax_pattern_ignored(state)
             .or_else(|| parse_gren_lowercase_as_box_str(state).map(GrenSyntaxPattern::Variable))
             .or_else(|| parse_gren_char(state).map(GrenSyntaxPattern::Char))
             .or_else(|| parse_gren_syntax_pattern_string(state))
@@ -17161,7 +17184,7 @@ fn parse_gren_syntax_pattern_not_space_separated(
     if state.position.character <= u32::from(state.indent) {
         return None;
     }
-    parse_symbol_as(state, "_", GrenSyntaxPattern::Ignored)
+    parse_gren_syntax_pattern_ignored(state)
         .or_else(|| parse_gren_syntax_pattern_parenthesized(state))
         .or_else(|| parse_gren_lowercase_as_box_str(state).map(GrenSyntaxPattern::Variable))
         .or_else(|| {
@@ -17176,6 +17199,14 @@ fn parse_gren_syntax_pattern_not_space_separated(
         .or_else(|| parse_gren_syntax_pattern_string(state))
         .or_else(|| parse_gren_syntax_pattern_record(state))
         .or_else(|| parse_gren_syntax_pattern_integer(state))
+}
+fn parse_gren_syntax_pattern_ignored(state: &mut ParseState) -> Option<GrenSyntaxPattern> {
+    if !parse_symbol(state, "_") {
+        return None;
+    }
+    Some(GrenSyntaxPattern::Ignored(parse_gren_lowercase_as_box_str(
+        state,
+    )))
 }
 fn parse_gren_syntax_pattern_record(state: &mut ParseState) -> Option<GrenSyntaxPattern> {
     if state.source[state.offset_utf8..].starts_with("{-|") {

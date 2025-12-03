@@ -11,7 +11,6 @@ You can also set their paths in the language server settings:
 
 ## TODO
 - support non-punned record patterns
-- support ignored patterns with a name
 - remove special handling of record type alias constructors
 - remove support for 2+ variant values on pattern and custom type declaration
 - TODO edit the vscode language grammar (ugh)
