@@ -6,7 +6,7 @@ cargo +nightly install --git https://github.com/lue-bird/gren-language-server-un
 Then point your editor to `gren-language-server-unofficial`, see also [specific setups](#editor-setups).
 
 You can also set their paths in the language server settings:
-- `gren-language-server-unofficial.grenPath: string`: compiler executable, default `"gren"`
+- `gren-language-server-unofficial.grenPath: string`: compiler executable, default `"gren"`. If the language server can't find it, set this option to the path that `which gren` prints :)
 - `gren-language-server-unofficial.grenFormatPath: "builtin" | string`: formatter executable, default `"builtin"`. `"builtin"` is a fast, unofficial rust formatter
 
 ## TODO
