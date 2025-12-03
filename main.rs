@@ -16425,7 +16425,7 @@ fn parse_gren_syntax_type_not_function_node(
         let start_position: lsp_types::Position = state.position;
         parse_gren_lowercase_as_box_str(state)
             .map(GrenSyntaxType::Variable)
-            .or_else(|| parse_gren_syntax_type_parenthesized_or_tuple_or_triple(state))
+            .or_else(|| parse_gren_syntax_type_parenthesized(state))
             .or_else(|| parse_gren_syntax_type_record_or_record_extension(state))
             .map(|type_| GrenSyntaxNode {
                 range: lsp_types::Range {
@@ -16454,7 +16454,7 @@ fn parse_gren_syntax_type_not_space_separated(state: &mut ParseState) -> Option<
     }
     parse_gren_lowercase_as_box_str(state)
         .map(GrenSyntaxType::Variable)
-        .or_else(|| parse_gren_syntax_type_parenthesized_or_tuple_or_triple(state))
+        .or_else(|| parse_gren_syntax_type_parenthesized(state))
         .or_else(|| {
             parse_gren_qualified_uppercase_reference_node(state).map(|reference_node| {
                 GrenSyntaxType::Construct {
@@ -16624,9 +16624,7 @@ fn parse_gren_qualified_uppercase_reference_node(
         })
     }
 }
-fn parse_gren_syntax_type_parenthesized_or_tuple_or_triple(
-    state: &mut ParseState,
-) -> Option<GrenSyntaxType> {
+fn parse_gren_syntax_type_parenthesized(state: &mut ParseState) -> Option<GrenSyntaxType> {
     if !parse_symbol(state, "(") {
         return None;
     }
