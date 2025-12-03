@@ -1146,7 +1146,7 @@ accordingly so that tools like the gren compiler and language server can find th
     }
     if !skipped_dependencies.is_empty() {
         eprintln!(
-            "I will skip initializing these dependencies {}: {}. \n  \
+            "I will skip initializing these dependency {}: {}. \n  \
             I can only load packages that you've actively downloaded with `gren install`. \
             If you did and don't care about LSP functionality for indirect dependencies, ignore this message.",
             if skipped_dependencies.len() == 1 {
@@ -1254,15 +1254,23 @@ fn initialize_state_for_project_into(
             .collect::<Vec<_>>(),
         Some(GrenJson::Package { .. }) => vec![std::path::Path::join(&project_path, "src")],
     };
-    let dependency_path = |package_name: &str, package_version: &str| {
-        std::path::Path::join(
-            gren_home_path,
-            format!(
-                "0.6.3/packages/{}__{}",
-                package_name.replace('/', "_"),
-                package_version.replace('.', "_")
-            ),
-        )
+    let dependency_path = |package_name: &str, package_version_or_local_path: &str| {
+        let dependency_is_package_not_local_path: bool = package_version_or_local_path
+            .chars()
+            .all(|char| char.is_ascii_digit() || char == '.');
+        if dependency_is_package_not_local_path {
+            std::path::Path::join(
+                gren_home_path,
+                format!(
+                    "0.6.3/packages/{}__{}",
+                    package_name.replace('/', "_"),
+                    package_version_or_local_path.replace('.', "_")
+                ),
+            )
+        } else {
+            // dependency is local path
+            std::path::Path::join(&project_path, package_version_or_local_path)
+        }
     };
     let direct_dependency_paths: Vec<std::path::PathBuf> = match &maybe_gren_json {
         None => vec![dependency_path("gren-lang/core", "7.2.1")],
@@ -1271,14 +1279,14 @@ fn initialize_state_for_project_into(
             source_directories: _,
         }) => direct_dependencies
             .iter()
-            .map(|(name, version)| dependency_path(name, version))
+            .map(|(name, version_or_local_path)| dependency_path(name, version_or_local_path))
             .collect::<Vec<_>>(),
         Some(GrenJson::Package {
             dependency_minimum_versions,
             exposed_modules: _,
         }) => dependency_minimum_versions
             .iter()
-            .map(|(n, v)| dependency_path(n, v))
+            .map(|(name, version_or_local_path)| dependency_path(name, version_or_local_path))
             .collect::<Vec<_>>(),
     };
     let module_states: std::collections::HashMap<std::path::PathBuf, ModuleState> =
@@ -16893,7 +16901,7 @@ fn parse_gren_syntax_expression_number(state: &mut ParseState) -> Option<GrenSyn
     Some(if has_decimal_point || has_exponent_plus.is_some() {
         GrenSyntaxExpression::Float(
             if has_exponent_plus.is_some_and(|exponent_is_plus| exponent_is_plus) {
-                str::parse::<f64>(&full_chomped_str.replace("+", ""))
+                str::parse::<f64>(&full_chomped_str.replace('+', ""))
                     .map_err(|_| Box::from(full_chomped_str))
             } else {
                 str::parse::<f64>(full_chomped_str).map_err(|_| Box::from(full_chomped_str))
