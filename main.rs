@@ -1254,22 +1254,22 @@ fn initialize_state_for_project_into(
         Some(GrenJson::Package { .. }) => vec![std::path::Path::join(&project_path, "src")],
     };
     let dependency_path = |package_name: &str, package_version_or_local_path: &str| {
-        let dependency_is_package_not_local_path: bool = package_version_or_local_path
-            .chars()
-            .all(|char| char.is_ascii_digit() || char == '.');
-        if dependency_is_package_not_local_path {
-            // https://github.com/gren-lang/compiler/blob/e907d5557065651c11fcc25b207b4b71ca9727d0/src/Git.gren#L144
-            std::path::Path::join(
-                gren_home_path,
-                format!(
-                    "0.6.3/packages/{}__{}",
-                    package_name.replace(['.', '/'], "_"),
-                    package_version_or_local_path.replace('.', "_")
-                ),
-            )
-        } else {
-            // dependency is local path
-            std::path::Path::join(&project_path, package_version_or_local_path)
+        match package_version_or_local_path.strip_prefix("local:") {
+            None => {
+                // https://github.com/gren-lang/compiler/blob/e907d5557065651c11fcc25b207b4b71ca9727d0/src/Git.gren#L144
+                std::path::Path::join(
+                    gren_home_path,
+                    format!(
+                        "0.6.3/packages/{}__{}",
+                        package_name.replace(['.', '/'], "_"),
+                        package_version_or_local_path.replace('.', "_")
+                    ),
+                )
+            }
+            Some(local_path) => {
+                // dependency is local path
+                std::path::Path::join(&project_path, local_path)
+            }
         }
     };
     let direct_dependency_paths: Vec<std::path::PathBuf> = match &maybe_gren_json {
