@@ -1772,7 +1772,7 @@ fn respond_to_hover(
                                     declaration_node.range,
                                     origin_module_declaration_name
                                         .as_ref()
-                                        .map(|node| gren_syntax_node_as_ref_map(node, Box::as_ref)),
+                                        .map(|node| gren_syntax_node_unbox(node)),
                                     documented_declaration
                                         .documentation
                                         .as_ref()
@@ -1780,7 +1780,7 @@ fn respond_to_hover(
                                     origin_module_declaration_parameters,
                                     origin_module_declaration_variant0_name_node
                                         .as_ref()
-                                        .map(|node| gren_syntax_node_as_ref_map(node, Box::as_ref)),
+                                        .map(|node| gren_syntax_node_unbox(node)),
                                     origin_module_declaration_variant0_values,
                                     origin_module_declaration_variant1_up,
                                 ))
@@ -1866,7 +1866,7 @@ fn respond_to_hover(
                                     hovered_module_origin,
                                     &hovered_project_module_state.module.syntax.comments,
                                     declaration_node.range,
-                                    Some(gren_syntax_node_as_ref_map(declaration_name_node, Box::as_ref)),
+                                    Some(gren_syntax_node_unbox(declaration_name_node)),
                                     documented_declaration
                                         .documentation
                                         .as_ref()
@@ -1892,7 +1892,7 @@ fn respond_to_hover(
                                     hovered_module_origin,
                                     &hovered_project_module_state.module.syntax.comments,
                                     declaration_node.range,
-                                    Some(gren_syntax_node_as_ref_map(declaration_name_node, Box::as_ref)),
+                                    Some(gren_syntax_node_unbox(declaration_name_node)),
                                     documented_declaration
                                         .documentation
                                         .as_ref()
@@ -1916,7 +1916,7 @@ fn respond_to_hover(
                                     &origin_module_origin_lookup,
                                     hovered_module_origin,
                                     &hovered_project_module_state.module.syntax.comments,
-                                    gren_syntax_node_as_ref_map(declaration_name_node, Box::as_ref),
+                                    gren_syntax_node_unbox(declaration_name_node),
                                     documented_declaration
                                         .documentation
                                         .as_ref()
@@ -1985,12 +1985,12 @@ fn respond_to_hover(
                             declaration_node.range,
                             origin_module_declaration_name
                                 .as_ref()
-                                .map(|node| gren_syntax_node_as_ref_map(node, Box::as_ref)),
+                                .map(|node| gren_syntax_node_unbox(node)),
                             documentation,
                             origin_module_declaration_parameters,
                             origin_module_declaration_variant0_name_node
                                 .as_ref()
-                                .map(|node| gren_syntax_node_as_ref_map(node, Box::as_ref)),
+                                .map(|node| gren_syntax_node_unbox(node)),
                             origin_module_declaration_variant0_values,
                             origin_module_declaration_variant1_up,
                         )
@@ -2063,7 +2063,7 @@ fn respond_to_hover(
                     declaration_node.range,
                     maybe_declaration_name
                         .as_ref()
-                        .map(|node| gren_syntax_node_as_ref_map(node, Box::as_ref)),
+                        .map(|node| gren_syntax_node_unbox(node)),
                     documentation,
                     type_.as_ref().map(gren_syntax_node_as_ref),
                 ),
@@ -2080,7 +2080,7 @@ fn respond_to_hover(
                     declaration_node.range,
                     maybe_declaration_name
                         .as_ref()
-                        .map(|node| gren_syntax_node_as_ref_map(node, Box::as_ref)),
+                        .map(|node| gren_syntax_node_unbox(node)),
                     documentation,
                     origin_module_declaration_parameters,
                     type_.as_ref().map(gren_syntax_node_as_ref),
@@ -2095,7 +2095,7 @@ fn respond_to_hover(
                     &origin_module_origin_lookup,
                     hovered_module_origin,
                     &hovered_project_module_state.module.syntax.comments,
-                    gren_syntax_node_as_ref_map(origin_module_declaration_name_node, Box::as_ref),
+                    gren_syntax_node_unbox(origin_module_declaration_name_node),
                     documentation,
                     origin_module_declaration_maybe_signature
                         .as_ref()
@@ -2157,7 +2157,7 @@ fn respond_to_hover(
                                     declaration_node.range,
                                     origin_module_declaration_name
                                         .as_ref()
-                                        .map(|node| gren_syntax_node_as_ref_map(node, Box::as_ref)),
+                                        .map(|node| gren_syntax_node_unbox(node)),
                                     documented_declaration
                                         .documentation
                                         .as_ref()
@@ -2165,7 +2165,7 @@ fn respond_to_hover(
                                     origin_module_declaration_parameters,
                                     origin_module_declaration_variant0_name_node
                                         .as_ref()
-                                        .map(|node| gren_syntax_node_as_ref_map(node, Box::as_ref)),
+                                        .map(|node| gren_syntax_node_unbox(node)),
                                     origin_module_declaration_variant0_values,
                                     origin_module_declaration_variant1_up,
                                 ))
@@ -2251,10 +2251,7 @@ fn respond_to_hover(
                                     hovered_module_origin,
                                     &hovered_project_module_state.module.syntax.comments,
                                     declaration_node.range,
-                                    Some(gren_syntax_node_as_ref_map(
-                                        declaration_name_node,
-                                        Box::as_ref,
-                                    )),
+                                    Some(gren_syntax_node_unbox(declaration_name_node)),
                                     documented_declaration
                                         .documentation
                                         .as_ref()
@@ -2280,10 +2277,7 @@ fn respond_to_hover(
                                     hovered_module_origin,
                                     &hovered_project_module_state.module.syntax.comments,
                                     declaration_node.range,
-                                    Some(gren_syntax_node_as_ref_map(
-                                        declaration_name_node,
-                                        Box::as_ref,
-                                    )),
+                                    Some(gren_syntax_node_unbox(declaration_name_node)),
                                     documented_declaration
                                         .documentation
                                         .as_ref()
@@ -2307,7 +2301,7 @@ fn respond_to_hover(
                                     &origin_module_origin_lookup,
                                     hovered_module_origin,
                                     &hovered_project_module_state.module.syntax.comments,
-                                    gren_syntax_node_as_ref_map(declaration_name_node, Box::as_ref),
+                                    gren_syntax_node_unbox(declaration_name_node),
                                     documented_declaration
                                         .documentation
                                         .as_ref()
@@ -2435,7 +2429,7 @@ fn respond_to_hover(
                                         origin_module_declaration_node.range,
                                         origin_module_declaration_name
                                             .as_ref()
-                                            .map(|node| gren_syntax_node_as_ref_map(node, Box::as_ref)),
+                                            .map(|node| gren_syntax_node_unbox(node)),
                                         origin_module_declaration
                                             .documentation
                                             .as_ref()
@@ -2443,7 +2437,7 @@ fn respond_to_hover(
                                         origin_module_declaration_parameters,
                                         origin_module_declaration_variant0_name_node
                                             .as_ref()
-                                            .map(|node| gren_syntax_node_as_ref_map(node, Box::as_ref)),
+                                            .map(|node| gren_syntax_node_unbox(node)),
                                         origin_module_declaration_variant0_values,
                                         origin_module_declaration_variant1_up,
                                     )
@@ -2522,7 +2516,7 @@ fn respond_to_hover(
                                     hovered_module_origin,
                                     &hovered_project_module_state.module.syntax.comments,
                                     origin_module_declaration_node.range,
-                                    Some(gren_syntax_node_as_ref_map(origin_module_declaration_name_node, Box::as_ref)),
+                                    Some(gren_syntax_node_unbox(origin_module_declaration_name_node)),
                                     origin_module_declaration
                                         .documentation
                                         .as_ref()
@@ -2546,7 +2540,7 @@ fn respond_to_hover(
                                     &origin_module_origin_lookup,
                                     hovered_module_origin,
                                     &hovered_project_module_state.module.syntax.comments,
-                                    gren_syntax_node_as_ref_map(origin_module_declaration_name_node, Box::as_ref),
+                                    gren_syntax_node_unbox(origin_module_declaration_name_node),
                                     origin_module_declaration
                                         .documentation
                                         .as_ref()
@@ -2623,10 +2617,7 @@ fn respond_to_hover(
                                     hovered_module_origin,
                                     &hovered_project_module_state.module.syntax.comments,
                                     origin_module_declaration_node.range,
-                                    Some(gren_syntax_node_as_ref_map(
-                                        origin_module_declaration_name_node,
-                                        Box::as_ref,
-                                    )),
+                                    Some(gren_syntax_node_unbox(origin_module_declaration_name_node)),
                                     origin_module_declaration
                                         .documentation
                                         .as_ref()
@@ -2634,7 +2625,7 @@ fn respond_to_hover(
                                     origin_module_declaration_parameters,
                                     maybe_origin_module_declaration_variant0_name_node
                                         .as_ref()
-                                        .map(|node| gren_syntax_node_as_ref_map(node, Box::as_ref)),
+                                        .map(|node| gren_syntax_node_unbox(node)),
                                     maybe_origin_module_declaration_variant0_values,
                                     origin_module_declaration_variant1_up,
                                 ))
@@ -2659,10 +2650,7 @@ fn respond_to_hover(
                                     hovered_module_origin,
                                     &hovered_project_module_state.module.syntax.comments,
                                     origin_module_declaration_node.range,
-                                    Some(gren_syntax_node_as_ref_map(
-                                        origin_module_declaration_name_node,
-                                        Box::as_ref,
-                                    )),
+                                    Some(gren_syntax_node_unbox(origin_module_declaration_name_node)),
                                     origin_module_declaration
                                         .documentation
                                         .as_ref()
@@ -4949,15 +4937,12 @@ fn respond_to_completion(
                                     module_origin,
                                     &completion_project_module.module.syntax.comments,
                                     origin_module_declaration_node.range,
-                                    Some(gren_syntax_node_as_ref_map(
-                                        choice_type_name_node,
-                                        Box::as_ref,
-                                    )),
+                                    Some(gren_syntax_node_unbox(choice_type_name_node)),
                                     origin_module_declaration_documentation,
                                     parameters,
                                     variant0_name
                                         .as_ref()
-                                        .map(|node| gren_syntax_node_as_ref_map(node, Box::as_ref)),
+                                        .map(|node| gren_syntax_node_unbox(node)),
                                     variant0_values,
                                     variant1_up,
                                 );
@@ -5004,10 +4989,7 @@ fn respond_to_completion(
                                             module_origin,
                                             &completion_project_module.module.syntax.comments,
                                             origin_module_declaration_node.range,
-                                            Some(gren_syntax_node_as_ref_map(
-                                                name_node,
-                                                Box::as_ref,
-                                            )),
+                                            Some(gren_syntax_node_unbox(name_node)),
                                             origin_module_declaration_documentation,
                                             type_.as_ref().map(gren_syntax_node_as_ref),
                                         ),
@@ -5038,10 +5020,7 @@ fn respond_to_completion(
                                             module_origin,
                                             &completion_project_module.module.syntax.comments,
                                             origin_module_declaration_node.range,
-                                            Some(gren_syntax_node_as_ref_map(
-                                                name_node,
-                                                Box::as_ref,
-                                            )),
+                                            Some(gren_syntax_node_unbox(name_node)),
                                             origin_module_declaration_documentation,
                                             parameters,
                                             maybe_type.as_ref().map(gren_syntax_node_as_ref),
@@ -5070,10 +5049,7 @@ fn respond_to_completion(
                                             &module_origin_lookup,
                                             module_origin,
                                             &completion_project_module.module.syntax.comments,
-                                            gren_syntax_node_as_ref_map(
-                                                start_name_node,
-                                                Box::as_ref,
-                                            ),
+                                            gren_syntax_node_unbox(start_name_node),
                                             origin_module_declaration_documentation,
                                             maybe_signature
                                                 .as_ref()
@@ -5169,15 +5145,12 @@ fn respond_to_completion(
                                     module_origin,
                                     &completion_project_module.module.syntax.comments,
                                     origin_module_declaration_node.range,
-                                    Some(gren_syntax_node_as_ref_map(
-                                        choice_type_name_node,
-                                        Box::as_ref,
-                                    )),
+                                    Some(gren_syntax_node_unbox(choice_type_name_node)),
                                     origin_module_declaration_documentation,
                                     parameters,
                                     variant0_name
                                         .as_ref()
-                                        .map(|node| gren_syntax_node_as_ref_map(node, Box::as_ref)),
+                                        .map(|node| gren_syntax_node_unbox(node)),
                                     variant0_values,
                                     variant1_up,
                                 );
@@ -5215,10 +5188,7 @@ fn respond_to_completion(
                                             module_origin,
                                             &completion_project_module.module.syntax.comments,
                                             origin_module_declaration_node.range,
-                                            Some(gren_syntax_node_as_ref_map(
-                                                name_node,
-                                                Box::as_ref,
-                                            )),
+                                            Some(gren_syntax_node_unbox(name_node)),
                                             origin_module_declaration_documentation,
                                             type_.as_ref().map(gren_syntax_node_as_ref),
                                         ),
@@ -5250,10 +5220,7 @@ fn respond_to_completion(
                                             module_origin,
                                             &completion_project_module.module.syntax.comments,
                                             origin_module_declaration_node.range,
-                                            Some(gren_syntax_node_as_ref_map(
-                                                name_node,
-                                                Box::as_ref,
-                                            )),
+                                            Some(gren_syntax_node_unbox(name_node)),
                                             origin_module_declaration_documentation,
                                             parameters,
                                             maybe_type.as_ref().map(gren_syntax_node_as_ref),
@@ -5284,10 +5251,7 @@ fn respond_to_completion(
                                             &module_origin_lookup,
                                             module_origin,
                                             &completion_project_module.module.syntax.comments,
-                                            gren_syntax_node_as_ref_map(
-                                                start_name_node,
-                                                Box::as_ref,
-                                            ),
+                                            gren_syntax_node_unbox(start_name_node),
                                             origin_module_declaration_documentation,
                                             maybe_signature
                                                 .as_ref()
@@ -5389,14 +5353,11 @@ fn respond_to_completion(
                                     to_complete_module_origin,
                                     &import_origin_module_state.syntax.comments,
                                     origin_module_declaration_node.range,
-                                    Some(gren_syntax_node_as_ref_map(
-                                        choice_type_name_node,
-                                        Box::as_ref
-                                    )),
+                                    Some(gren_syntax_node_unbox(choice_type_name_node)),
                                     origin_module_declaration_documentation,
                                     parameters,
                                     variant0_name.as_ref().map(|node| {
-                                        gren_syntax_node_as_ref_map(node, Box::as_ref)
+                                        gren_syntax_node_unbox(node)
                                     }),
                                     variant0_values,
                                     variant1_up,
@@ -5447,10 +5408,7 @@ fn respond_to_completion(
                                             to_complete_module_origin,
                                             &import_origin_module_state.syntax.comments,
                                             origin_module_declaration_node.range,
-                                            Some(gren_syntax_node_as_ref_map(
-                                                name_node,
-                                                Box::as_ref,
-                                            )),
+                                            Some(gren_syntax_node_unbox(name_node)),
                                             origin_module_declaration_documentation,
                                             type_.as_ref().map(gren_syntax_node_as_ref),
                                         ),
@@ -5483,10 +5441,7 @@ fn respond_to_completion(
                                             to_complete_module_origin,
                                             &import_origin_module_state.syntax.comments,
                                             origin_module_declaration_node.range,
-                                            Some(gren_syntax_node_as_ref_map(
-                                                name_node,
-                                                Box::as_ref,
-                                            )),
+                                            Some(gren_syntax_node_unbox(name_node)),
                                             origin_module_declaration_documentation,
                                             parameters,
                                             maybe_type.as_ref().map(gren_syntax_node_as_ref),
@@ -5517,10 +5472,7 @@ fn respond_to_completion(
                                             &import_module_origin_lookup,
                                             to_complete_module_origin,
                                             &import_origin_module_state.syntax.comments,
-                                            gren_syntax_node_as_ref_map(
-                                                start_name_node,
-                                                Box::as_ref,
-                                            ),
+                                            gren_syntax_node_unbox(start_name_node),
                                             origin_module_declaration_documentation,
                                             maybe_signature
                                                 .as_ref()
@@ -5903,15 +5855,12 @@ fn variable_declaration_completions_into(
                             module_name,
                             &module_syntax.comments,
                             origin_module_declaration_node.range,
-                            Some(gren_syntax_node_as_ref_map(
-                                choice_type_name_node,
-                                Box::as_ref
-                            )),
+                            Some(gren_syntax_node_unbox(choice_type_name_node)),
                             origin_module_declaration_documentation,
                             parameters,
                             variant0_name
                                 .as_ref()
-                                .map(|node| gren_syntax_node_as_ref_map(node, Box::as_ref)),
+                                .map(|node| gren_syntax_node_unbox(node)),
                             variant0_values,
                             variant1_up,
                         ),
@@ -5957,7 +5906,7 @@ fn variable_declaration_completions_into(
                                     module_name,
                                     &module_syntax.comments,
                                     origin_module_declaration_node.range,
-                                    Some(gren_syntax_node_as_ref_map(name_node, Box::as_ref)),
+                                    Some(gren_syntax_node_unbox(name_node)),
                                     origin_module_declaration_documentation,
                                     type_.as_ref().map(gren_syntax_node_as_ref),
                                 ),
@@ -5986,7 +5935,7 @@ fn variable_declaration_completions_into(
                                     &module_origin_lookup,
                                     module_name,
                                     &module_syntax.comments,
-                                    gren_syntax_node_as_ref_map(start_name_node, Box::as_ref),
+                                    gren_syntax_node_unbox(start_name_node),
                                     origin_module_declaration_documentation,
                                     maybe_signature
                                         .as_ref()
@@ -6064,12 +6013,12 @@ fn type_declaration_completions_into(
                                     module_name,
                                     &module_syntax.comments,
                                     origin_module_declaration_node.range,
-                                    Some(gren_syntax_node_as_ref_map(name_node, Box::as_ref)),
+                                    Some(gren_syntax_node_unbox(name_node)),
                                     origin_module_declaration_documentation,
                                     parameters,
                                     maybe_variant0_name
                                         .as_ref()
-                                        .map(|node| gren_syntax_node_as_ref_map(node, Box::as_ref)),
+                                        .map(|node| gren_syntax_node_unbox(node)),
                                     variant0_values,
                                     variant1_up,
                                 ),
@@ -6103,7 +6052,7 @@ fn type_declaration_completions_into(
                                     module_name,
                                     &module_syntax.comments,
                                     origin_module_declaration_node.range,
-                                    Some(gren_syntax_node_as_ref_map(name_node, Box::as_ref)),
+                                    Some(gren_syntax_node_unbox(name_node)),
                                     origin_module_declaration_documentation,
                                     parameters,
                                     type_.as_ref().map(gren_syntax_node_as_ref),
@@ -10333,7 +10282,7 @@ fn gren_syntax_let_declaration_into(
                 so_far,
                 indent,
                 comments,
-                gren_syntax_node_as_ref_map(start_name_node, Box::as_ref),
+                gren_syntax_node_unbox(start_name_node),
                 maybe_signature.as_ref(),
                 parameters,
                 *maybe_equals_key_symbol_range,
@@ -11386,11 +11335,11 @@ fn gren_syntax_declaration_into(
                 declaration_node.range,
                 maybe_name
                     .as_ref()
-                    .map(|name_node| gren_syntax_node_as_ref_map(name_node, Box::as_ref)),
+                    .map(|name_node| gren_syntax_node_unbox(name_node)),
                 parameters,
                 maybe_variant0_name
                     .as_ref()
-                    .map(|name_node| gren_syntax_node_as_ref_map(name_node, Box::as_ref)),
+                    .map(|name_node| gren_syntax_node_unbox(name_node)),
                 variant0_values,
                 variant1_up,
             );
@@ -11434,7 +11383,7 @@ fn gren_syntax_declaration_into(
                 declaration_node.range,
                 maybe_name
                     .as_ref()
-                    .map(|name_node| gren_syntax_node_as_ref_map(name_node, Box::as_ref)),
+                    .map(|name_node| gren_syntax_node_unbox(name_node)),
                 maybe_type.as_ref().map(gren_syntax_node_as_ref),
             );
         }
@@ -11452,7 +11401,7 @@ fn gren_syntax_declaration_into(
                 declaration_node.range,
                 maybe_name
                     .as_ref()
-                    .map(|name_node| gren_syntax_node_as_ref_map(name_node, Box::as_ref)),
+                    .map(|name_node| gren_syntax_node_unbox(name_node)),
                 parameters,
                 maybe_type.as_ref().map(gren_syntax_node_as_ref),
             );
@@ -11468,7 +11417,7 @@ fn gren_syntax_declaration_into(
                 so_far,
                 0,
                 comments,
-                gren_syntax_node_as_ref_map(start_name_node, Box::as_ref),
+                gren_syntax_node_unbox(start_name_node),
                 maybe_signature.as_ref(),
                 parameters,
                 *maybe_equals_key_symbol_range,
@@ -11692,7 +11641,7 @@ fn gren_syntax_choice_type_declaration_into<'a>(
             assign_qualification,
             previous_syntax_end,
             variant.name.as_ref().map(|variant_name_node| {
-                gren_syntax_node_as_ref_map(variant_name_node, Box::as_ref)
+                gren_syntax_node_unbox(variant_name_node)
             }),
             &variant.values,
         );
