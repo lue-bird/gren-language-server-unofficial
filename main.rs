@@ -7204,7 +7204,7 @@ enum GrenSyntaxExpression {
         in_keyword_range: Option<lsp_types::Range>,
         result: Option<GrenSyntaxNode<Box<GrenSyntaxExpression>>>,
     },
-    List(Vec<GrenSyntaxNode<GrenSyntaxExpression>>),
+    Array(Vec<GrenSyntaxNode<GrenSyntaxExpression>>),
     Negation(Option<GrenSyntaxNode<Box<GrenSyntaxExpression>>>),
     OperatorFunction(GrenSyntaxNode<&'static str>),
     Parenthesized(Option<GrenSyntaxNode<Box<GrenSyntaxExpression>>>),
@@ -9751,7 +9751,7 @@ fn gren_syntax_expression_not_parenthesized_into(
                 );
             }
         }
-        GrenSyntaxExpression::List(elements) => {
+        GrenSyntaxExpression::Array(elements) => {
             let comments: &[GrenSyntaxNode<GrenSyntaxComment>] =
                 gren_syntax_comments_in_range(comments, expression_node.range);
             match elements.split_last() {
@@ -10459,7 +10459,7 @@ fn gren_syntax_expression_line_span(
             | GrenSyntaxExpression::Char(_)
             | GrenSyntaxExpression::Negation(_)
             | GrenSyntaxExpression::Parenthesized(_)
-            | GrenSyntaxExpression::List(_)
+            | GrenSyntaxExpression::Array(_)
             | GrenSyntaxExpression::Lambda { .. }
             | GrenSyntaxExpression::InfixOperationIgnoringPrecedence { .. }
             | GrenSyntaxExpression::Record(_)
@@ -10551,7 +10551,7 @@ fn gren_syntax_expression_parenthesized_if_space_separated_into(
                 GrenSyntaxExpression::Char(_)
                 | GrenSyntaxExpression::Float(_)
                 | GrenSyntaxExpression::Integer { .. }
-                | GrenSyntaxExpression::List(_)
+                | GrenSyntaxExpression::Array(_)
                 | GrenSyntaxExpression::Negation(_)
                 | GrenSyntaxExpression::OperatorFunction(_)
                 | GrenSyntaxExpression::Parenthesized(_)
@@ -10608,7 +10608,7 @@ fn gren_syntax_expression_parenthesized_if_not_call_but_space_separated_into(
                 | GrenSyntaxExpression::Char(_)
                 | GrenSyntaxExpression::Float(_)
                 | GrenSyntaxExpression::Integer { .. }
-                | GrenSyntaxExpression::List(_)
+                | GrenSyntaxExpression::Array(_)
                 | GrenSyntaxExpression::Negation(_)
                 | GrenSyntaxExpression::OperatorFunction(_)
                 | GrenSyntaxExpression::Parenthesized(_)
@@ -10742,7 +10742,7 @@ fn gren_syntax_expression_any_sub(
                     )
                 })
         }
-        GrenSyntaxExpression::List(elements) => elements.iter().any(|element_node| {
+        GrenSyntaxExpression::Array(elements) => elements.iter().any(|element_node| {
             gren_syntax_expression_any_sub(gren_syntax_node_as_ref(element_node), is_needle)
         }),
         GrenSyntaxExpression::Negation(maybe_in_negation) => {
@@ -12623,7 +12623,7 @@ fn gren_syntax_expression_find_reference_at_position<'a>(
                 None => std::ops::ControlFlow::Continue(local_bindings),
             }
         }
-        GrenSyntaxExpression::List(elements) => {
+        GrenSyntaxExpression::Array(elements) => {
             elements
                 .iter()
                 .try_fold(local_bindings, |local_bindings, element| {
@@ -13621,7 +13621,7 @@ fn gren_syntax_expression_uses_of_reference_into(
                 );
             }
         }
-        GrenSyntaxExpression::List(elements) => {
+        GrenSyntaxExpression::Array(elements) => {
             for element_node in elements {
                 gren_syntax_expression_uses_of_reference_into(
                     uses_so_far,
@@ -15289,7 +15289,7 @@ fn gren_syntax_highlight_expression_into(
                 );
             }
         }
-        GrenSyntaxExpression::List(elements) => {
+        GrenSyntaxExpression::Array(elements) => {
             for element_node in elements {
                 gren_syntax_highlight_expression_into(
                     highlighted_so_far,
@@ -17756,7 +17756,7 @@ fn parse_gren_syntax_expression_list(state: &mut ParseState) -> Option<GrenSynta
         }
     }
     let _: bool = parse_symbol(state, "]");
-    Some(GrenSyntaxExpression::List(elements))
+    Some(GrenSyntaxExpression::Array(elements))
 }
 fn parse_gren_syntax_expression_operator_function_or_parenthesized(
     state: &mut ParseState,
