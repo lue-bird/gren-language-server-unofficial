@@ -71,13 +71,7 @@
           "scope": "window",
           "type": "string",
           "default": "",
-          "description": "test runner executable, default gren-test. Should be empty by default."
-        },
-        "gren-language-server-unofficial.grenTestPath": {
-          "scope": "window",
-          "type": "string",
-          "default": "",
-          "description": "formatter executable, default gren-format. \"builtin\" is a fast rust formatter that is mostly but not fully compatible. Should be empty by default."
+          "description": "formatter executable, default builtin. Should be empty by default."
         }
       }
     }

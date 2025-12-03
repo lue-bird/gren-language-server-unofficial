@@ -59,14 +59,12 @@ function getSettings(config: IClientSettings | undefined): object {
     ? {
       grenPath: config.grenPath,
       grenFormatPath: config.grenFormatPath,
-      grenTestPath: config.grenTestPath,
     }
     : {};
 }
 export interface IClientSettings {
   grenFormatPath: "builtin" | string;
   grenPath: string;
-  grenTestPath: string;
 }
 
 export function deactivate(): Thenable<void> | undefined {
