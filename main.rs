@@ -1754,7 +1754,7 @@ fn respond_to_hover(
                             parameters: origin_module_declaration_parameters,
                             equals_key_symbol_range: _,
                             variant0_name: origin_module_declaration_variant0_name_node,
-                            variant0_values: origin_module_declaration_variant0_values,
+                            variant0_value: origin_module_declaration_variant0_maybe_value,
                             variant1_up: origin_module_declaration_variant1_up,
                         } => {
                             if origin_module_declaration_name
@@ -1781,7 +1781,7 @@ fn respond_to_hover(
                                     origin_module_declaration_variant0_name_node
                                         .as_ref()
                                         .map(gren_syntax_node_unbox),
-                                    origin_module_declaration_variant0_values,
+                                    origin_module_declaration_variant0_maybe_value.as_ref().map(gren_syntax_node_as_ref),
                                     origin_module_declaration_variant1_up,
                                 ))
                             } else {
@@ -1964,7 +1964,7 @@ fn respond_to_hover(
                     parameters: origin_module_declaration_parameters,
                     equals_key_symbol_range: _,
                     variant0_name: origin_module_declaration_variant0_name_node,
-                    variant0_values: origin_module_declaration_variant0_values,
+                    variant0_value: origin_module_declaration_variant0_maybe_value,
                     variant1_up: origin_module_declaration_variant1_up,
                 } => {
                     format!(
@@ -1991,7 +1991,9 @@ fn respond_to_hover(
                             origin_module_declaration_variant0_name_node
                                 .as_ref()
                                 .map(gren_syntax_node_unbox),
-                            origin_module_declaration_variant0_values,
+                            origin_module_declaration_variant0_maybe_value
+                                .as_ref()
+                                .map(gren_syntax_node_as_ref),
                             origin_module_declaration_variant1_up,
                         )
                     )
@@ -2061,9 +2063,7 @@ fn respond_to_hover(
                     hovered_module_origin,
                     &hovered_project_module_state.module.syntax.comments,
                     declaration_node.range,
-                    maybe_declaration_name
-                        .as_ref()
-                        .map(gren_syntax_node_unbox),
+                    maybe_declaration_name.as_ref().map(gren_syntax_node_unbox),
                     documentation,
                     type_.as_ref().map(gren_syntax_node_as_ref),
                 ),
@@ -2078,9 +2078,7 @@ fn respond_to_hover(
                     hovered_module_origin,
                     &hovered_project_module_state.module.syntax.comments,
                     declaration_node.range,
-                    maybe_declaration_name
-                        .as_ref()
-                        .map(gren_syntax_node_unbox),
+                    maybe_declaration_name.as_ref().map(gren_syntax_node_unbox),
                     documentation,
                     origin_module_declaration_parameters,
                     type_.as_ref().map(gren_syntax_node_as_ref),
@@ -2129,61 +2127,61 @@ fn respond_to_hover(
                     hovered_project_module_state.project,
                     &origin_module_state.syntax,
                 );
-            let origin_declaration_info_markdown: String = origin_module_state
-                .syntax
-                .declarations
-                .iter()
-                .find_map(|documented_declaration_or_err| {
-                    let documented_declaration = documented_declaration_or_err.as_ref().ok()?;
-                    let declaration_node = documented_declaration.declaration.as_ref()?;
-                    match &declaration_node.value {
-                        GrenSyntaxDeclaration::ChoiceType {
-                            name: origin_module_declaration_name,
-                            parameters: origin_module_declaration_parameters,
-                            equals_key_symbol_range: _,
-                            variant0_name: origin_module_declaration_variant0_name_node,
-                            variant0_values: origin_module_declaration_variant0_values,
-                            variant1_up: origin_module_declaration_variant1_up,
-                        } => {
-                            if origin_module_declaration_name
-                                .as_ref()
-                                .map(|node| node.value.as_ref())
-                                == Some(hovered_name)
-                            {
-                                Some(present_choice_type_declaration_info_markdown(
-                                    &origin_module_origin_lookup,
-                                    hovered_module_origin,
-                                    &hovered_project_module_state.module.syntax.comments,
-                                    declaration_node.range,
-                                    origin_module_declaration_name
-                                        .as_ref()
-                                        .map(gren_syntax_node_unbox),
-                                    documented_declaration
-                                        .documentation
-                                        .as_ref()
-                                        .map(|node| node.value.as_ref()),
-                                    origin_module_declaration_parameters,
-                                    origin_module_declaration_variant0_name_node
-                                        .as_ref()
-                                        .map(gren_syntax_node_unbox),
-                                    origin_module_declaration_variant0_values,
-                                    origin_module_declaration_variant1_up,
-                                ))
-                            } else {
-                                None
+            let origin_declaration_info_markdown: String =
+                origin_module_state.syntax.declarations.iter().find_map(
+                    |documented_declaration_or_err| {
+                        let documented_declaration = documented_declaration_or_err.as_ref().ok()?;
+                        let declaration_node = documented_declaration.declaration.as_ref()?;
+                        match &declaration_node.value {
+                            GrenSyntaxDeclaration::ChoiceType {
+                                name: origin_module_declaration_name,
+                                parameters: origin_module_declaration_parameters,
+                                equals_key_symbol_range: _,
+                                variant0_name: origin_module_declaration_variant0_name_node,
+                                variant0_value: origin_module_declaration_variant0_maybe_value,
+                                variant1_up: origin_module_declaration_variant1_up,
+                            } => {
+                                if origin_module_declaration_name
+                                    .as_ref()
+                                    .map(|node| node.value.as_ref())
+                                    == Some(hovered_name)
+                                {
+                                    Some(present_choice_type_declaration_info_markdown(
+                                        &origin_module_origin_lookup,
+                                        hovered_module_origin,
+                                        &hovered_project_module_state.module.syntax.comments,
+                                        declaration_node.range,
+                                        origin_module_declaration_name
+                                            .as_ref()
+                                            .map(gren_syntax_node_unbox),
+                                        documented_declaration
+                                            .documentation
+                                            .as_ref()
+                                            .map(|node| node.value.as_ref()),
+                                        origin_module_declaration_parameters,
+                                        origin_module_declaration_variant0_name_node
+                                            .as_ref()
+                                            .map(gren_syntax_node_unbox),
+                                        origin_module_declaration_variant0_maybe_value
+                                            .as_ref()
+                                            .map(gren_syntax_node_as_ref),
+                                        origin_module_declaration_variant1_up,
+                                    ))
+                                } else {
+                                    None
+                                }
                             }
-                        }
-                        GrenSyntaxDeclaration::Operator {
-                            direction: maybe_declaration_direction,
-                            precedence: maybe_declaration_precedence,
-                            operator: maybe_declaration_operator,
-                            equals_key_symbol_range: _,
-                            function: maybe_declaration_function,
-                        } => {
-                            if maybe_declaration_operator.as_ref().map(|node| node.value)
-                                == Some(hovered_name)
-                            {
-                                let maybe_origin_operator_function_declaration =
+                            GrenSyntaxDeclaration::Operator {
+                                direction: maybe_declaration_direction,
+                                precedence: maybe_declaration_precedence,
+                                operator: maybe_declaration_operator,
+                                equals_key_symbol_range: _,
+                                function: maybe_declaration_function,
+                            } => {
+                                if maybe_declaration_operator.as_ref().map(|node| node.value)
+                                    == Some(hovered_name)
+                                {
+                                    let maybe_origin_operator_function_declaration =
                                     maybe_declaration_function.as_ref().and_then(
                                         |origin_module_declaration_function_node| {
                                             origin_module_state.syntax.declarations.iter().find_map(
@@ -2222,101 +2220,102 @@ fn respond_to_hover(
                                             )
                                         },
                                     );
-                                Some(present_operator_declaration_info_markdown(
-                                    &origin_module_origin_lookup,
-                                    hovered_module_origin,
-                                    maybe_declaration_operator.as_ref().map(|node| node.value),
-                                    maybe_origin_operator_function_declaration,
-                                    documented_declaration
-                                        .documentation
-                                        .as_ref()
-                                        .map(|node| node.value.as_ref()),
-                                    maybe_declaration_direction.map(|node| node.value),
-                                    maybe_declaration_precedence.map(|node| node.value),
-                                ))
-                            } else {
-                                None
+                                    Some(present_operator_declaration_info_markdown(
+                                        &origin_module_origin_lookup,
+                                        hovered_module_origin,
+                                        maybe_declaration_operator.as_ref().map(|node| node.value),
+                                        maybe_origin_operator_function_declaration,
+                                        documented_declaration
+                                            .documentation
+                                            .as_ref()
+                                            .map(|node| node.value.as_ref()),
+                                        maybe_declaration_direction.map(|node| node.value),
+                                        maybe_declaration_precedence.map(|node| node.value),
+                                    ))
+                                } else {
+                                    None
+                                }
+                            }
+                            GrenSyntaxDeclaration::Port {
+                                name: maybe_declaration_name,
+                                colon_key_symbol_range: _,
+                                type_,
+                            } => {
+                                if let Some(declaration_name_node) = maybe_declaration_name
+                                    && declaration_name_node.value.as_ref() == hovered_name
+                                {
+                                    Some(present_port_declaration_info_markdown(
+                                        &origin_module_origin_lookup,
+                                        hovered_module_origin,
+                                        &hovered_project_module_state.module.syntax.comments,
+                                        declaration_node.range,
+                                        Some(gren_syntax_node_unbox(declaration_name_node)),
+                                        documented_declaration
+                                            .documentation
+                                            .as_ref()
+                                            .map(|node| node.value.as_ref()),
+                                        type_.as_ref().map(gren_syntax_node_as_ref),
+                                    ))
+                                } else {
+                                    None
+                                }
+                            }
+                            GrenSyntaxDeclaration::TypeAlias {
+                                alias_keyword_range: _,
+                                name: maybe_declaration_name,
+                                parameters: origin_module_declaration_parameters,
+                                equals_key_symbol_range: _,
+                                type_,
+                            } => {
+                                if let Some(declaration_name_node) = maybe_declaration_name
+                                    && declaration_name_node.value.as_ref() == hovered_name
+                                {
+                                    Some(present_type_alias_declaration_info_markdown(
+                                        &origin_module_origin_lookup,
+                                        hovered_module_origin,
+                                        &hovered_project_module_state.module.syntax.comments,
+                                        declaration_node.range,
+                                        Some(gren_syntax_node_unbox(declaration_name_node)),
+                                        documented_declaration
+                                            .documentation
+                                            .as_ref()
+                                            .map(|node| node.value.as_ref()),
+                                        origin_module_declaration_parameters,
+                                        type_.as_ref().map(gren_syntax_node_as_ref),
+                                    ))
+                                } else {
+                                    None
+                                }
+                            }
+                            GrenSyntaxDeclaration::Variable {
+                                start_name: declaration_name_node,
+                                signature: declaration_maybe_signature,
+                                parameters: _,
+                                equals_key_symbol_range: _,
+                                result: _,
+                            } => {
+                                if declaration_name_node.value.as_ref() == hovered_name {
+                                    Some(present_variable_declaration_info_markdown(
+                                        &origin_module_origin_lookup,
+                                        hovered_module_origin,
+                                        &hovered_project_module_state.module.syntax.comments,
+                                        gren_syntax_node_unbox(declaration_name_node),
+                                        documented_declaration
+                                            .documentation
+                                            .as_ref()
+                                            .map(|node| node.value.as_ref()),
+                                        declaration_maybe_signature
+                                            .as_ref()
+                                            .and_then(|signature| signature.type_.as_ref())
+                                            .map(gren_syntax_node_as_ref),
+                                    ))
+                                } else {
+                                    None
+                                }
                             }
                         }
-                        GrenSyntaxDeclaration::Port {
-                            name: maybe_declaration_name,
-                            colon_key_symbol_range: _,
-                            type_,
-                        } => {
-                            if let Some(declaration_name_node) = maybe_declaration_name
-                                && declaration_name_node.value.as_ref() == hovered_name
-                            {
-                                Some(present_port_declaration_info_markdown(
-                                    &origin_module_origin_lookup,
-                                    hovered_module_origin,
-                                    &hovered_project_module_state.module.syntax.comments,
-                                    declaration_node.range,
-                                    Some(gren_syntax_node_unbox(declaration_name_node)),
-                                    documented_declaration
-                                        .documentation
-                                        .as_ref()
-                                        .map(|node| node.value.as_ref()),
-                                    type_.as_ref().map(gren_syntax_node_as_ref),
-                                ))
-                            } else {
-                                None
-                            }
-                        }
-                        GrenSyntaxDeclaration::TypeAlias {
-                            alias_keyword_range: _,
-                            name: maybe_declaration_name,
-                            parameters: origin_module_declaration_parameters,
-                            equals_key_symbol_range: _,
-                            type_,
-                        } => {
-                            if let Some(declaration_name_node) = maybe_declaration_name
-                                && declaration_name_node.value.as_ref() == hovered_name
-                            {
-                                Some(present_type_alias_declaration_info_markdown(
-                                    &origin_module_origin_lookup,
-                                    hovered_module_origin,
-                                    &hovered_project_module_state.module.syntax.comments,
-                                    declaration_node.range,
-                                    Some(gren_syntax_node_unbox(declaration_name_node)),
-                                    documented_declaration
-                                        .documentation
-                                        .as_ref()
-                                        .map(|node| node.value.as_ref()),
-                                    origin_module_declaration_parameters,
-                                    type_.as_ref().map(gren_syntax_node_as_ref),
-                                ))
-                            } else {
-                                None
-                            }
-                        }
-                        GrenSyntaxDeclaration::Variable {
-                            start_name: declaration_name_node,
-                            signature: declaration_maybe_signature,
-                            parameters: _,
-                            equals_key_symbol_range: _,
-                            result: _,
-                        } => {
-                            if declaration_name_node.value.as_ref() == hovered_name {
-                                Some(present_variable_declaration_info_markdown(
-                                    &origin_module_origin_lookup,
-                                    hovered_module_origin,
-                                    &hovered_project_module_state.module.syntax.comments,
-                                    gren_syntax_node_unbox(declaration_name_node),
-                                    documented_declaration
-                                        .documentation
-                                        .as_ref()
-                                        .map(|node| node.value.as_ref()),
-                                    declaration_maybe_signature
-                                        .as_ref()
-                                        .and_then(|signature| signature.type_.as_ref())
-                                        .map(gren_syntax_node_as_ref),
-                                ))
-                            } else {
-                                None
-                            }
-                        }
-                    }
-                })?;
+                    },
+                )?;
             Some(lsp_types::Hover {
                 contents: lsp_types::HoverContents::Markup(lsp_types::MarkupContent {
                     kind: lsp_types::MarkupKind::Markdown,
@@ -2405,7 +2404,7 @@ fn respond_to_hover(
                             parameters: origin_module_declaration_parameters,
                             equals_key_symbol_range: _,
                             variant0_name: origin_module_declaration_variant0_name_node,
-                            variant0_values: origin_module_declaration_variant0_values,
+                            variant0_value: origin_module_declaration_variant0_maybe_value,
                             variant1_up: origin_module_declaration_variant1_up,
                         } => {
                             let any_declared_name_matches_hovered: bool =
@@ -2438,7 +2437,9 @@ fn respond_to_hover(
                                         origin_module_declaration_variant0_name_node
                                             .as_ref()
                                             .map(gren_syntax_node_unbox),
-                                        origin_module_declaration_variant0_values,
+                                        origin_module_declaration_variant0_maybe_value
+                                            .as_ref()
+                                            .map(gren_syntax_node_as_ref),
                                         origin_module_declaration_variant1_up,
                                     )
                                 ))
@@ -2604,7 +2605,7 @@ fn respond_to_hover(
                             parameters: origin_module_declaration_parameters,
                             equals_key_symbol_range: _,
                             variant0_name: maybe_origin_module_declaration_variant0_name_node,
-                            variant0_values: maybe_origin_module_declaration_variant0_values,
+                            variant0_value: maybe_origin_module_declaration_variant0_maybe_value,
                             variant1_up: origin_module_declaration_variant1_up,
                         } => {
                             if let Some(origin_module_declaration_name_node) =
@@ -2617,7 +2618,9 @@ fn respond_to_hover(
                                     hovered_module_origin,
                                     &hovered_project_module_state.module.syntax.comments,
                                     origin_module_declaration_node.range,
-                                    Some(gren_syntax_node_unbox(origin_module_declaration_name_node)),
+                                    Some(gren_syntax_node_unbox(
+                                        origin_module_declaration_name_node,
+                                    )),
                                     origin_module_declaration
                                         .documentation
                                         .as_ref()
@@ -2626,7 +2629,9 @@ fn respond_to_hover(
                                     maybe_origin_module_declaration_variant0_name_node
                                         .as_ref()
                                         .map(gren_syntax_node_unbox),
-                                    maybe_origin_module_declaration_variant0_values,
+                                    maybe_origin_module_declaration_variant0_maybe_value
+                                        .as_ref()
+                                        .map(gren_syntax_node_as_ref),
                                     origin_module_declaration_variant1_up,
                                 ))
                             } else {
@@ -2650,7 +2655,9 @@ fn respond_to_hover(
                                     hovered_module_origin,
                                     &hovered_project_module_state.module.syntax.comments,
                                     origin_module_declaration_node.range,
-                                    Some(gren_syntax_node_unbox(origin_module_declaration_name_node)),
+                                    Some(gren_syntax_node_unbox(
+                                        origin_module_declaration_name_node,
+                                    )),
                                     origin_module_declaration
                                         .documentation
                                         .as_ref()
@@ -2782,7 +2789,7 @@ fn respond_to_goto_definition(
                     parameters: origin_type_parameters,
                     equals_key_symbol_range: _,
                     variant0_name: _,
-                    variant0_values: _,
+                    variant0_value: _,
                     variant1_up: _,
                 } => {
                     let goto_type_variable_name_origin_parameter_node = origin_type_parameters
@@ -4596,7 +4603,7 @@ fn present_choice_type_declaration_info_markdown(
     maybe_documentation: Option<&str>,
     parameters: &[GrenSyntaxNode<Box<str>>],
     variant0_name: Option<GrenSyntaxNode<&str>>,
-    variant0_values: &[GrenSyntaxNode<GrenSyntaxType>],
+    variant0_maybe_value: Option<GrenSyntaxNode<&GrenSyntaxType>>,
     variant1_up: &[GrenSyntaxChoiceTypeDeclarationTailingVariant],
 ) -> String {
     let mut declaration_string: String = String::new();
@@ -4612,7 +4619,7 @@ fn present_choice_type_declaration_info_markdown(
             .map(|name_node| gren_syntax_node_as_ref_map(name_node, String::as_str)),
         parameters,
         variant0_name,
-        variant0_values,
+        variant0_maybe_value,
         variant1_up,
     );
     let description: String = format!("```gren\n{}\n```\n", declaration_string);
@@ -4925,7 +4932,7 @@ fn respond_to_completion(
                         parameters,
                         equals_key_symbol_range: _,
                         variant0_name,
-                        variant0_values,
+                        variant0_value: variant0_maybe_value,
                         variant1_up,
                     } => {
                         if let Some(choice_type_name_node) = maybe_choice_type_name
@@ -4940,10 +4947,8 @@ fn respond_to_completion(
                                     Some(gren_syntax_node_unbox(choice_type_name_node)),
                                     origin_module_declaration_documentation,
                                     parameters,
-                                    variant0_name
-                                        .as_ref()
-                                        .map(gren_syntax_node_unbox),
-                                    variant0_values,
+                                    variant0_name.as_ref().map(gren_syntax_node_unbox),
+                                    variant0_maybe_value.as_ref().map(gren_syntax_node_as_ref),
                                     variant1_up,
                                 );
                             completion_items.push(lsp_types::CompletionItem {
@@ -5132,7 +5137,7 @@ fn respond_to_completion(
                         parameters,
                         equals_key_symbol_range: _,
                         variant0_name,
-                        variant0_values,
+                        variant0_value: variant0_maybe_value,
                         variant1_up,
                     } => {
                         if let Some(choice_type_name_node) = maybe_choice_type_name
@@ -5148,10 +5153,8 @@ fn respond_to_completion(
                                     Some(gren_syntax_node_unbox(choice_type_name_node)),
                                     origin_module_declaration_documentation,
                                     parameters,
-                                    variant0_name
-                                        .as_ref()
-                                        .map(gren_syntax_node_unbox),
-                                    variant0_values,
+                                    variant0_name.as_ref().map(gren_syntax_node_unbox),
+                                    variant0_maybe_value.as_ref().map(gren_syntax_node_as_ref),
                                     variant1_up,
                                 );
                             completion_items.push(lsp_types::CompletionItem {
@@ -5338,7 +5341,7 @@ fn respond_to_completion(
                         parameters,
                         equals_key_symbol_range: _,
                         variant0_name,
-                        variant0_values,
+                        variant0_value: variant0_maybe_value,
                         variant1_up,
                     } => {
                         if let Some(choice_type_name_node) = maybe_choice_type_name
@@ -5356,10 +5359,10 @@ fn respond_to_completion(
                                     Some(gren_syntax_node_unbox(choice_type_name_node)),
                                     origin_module_declaration_documentation,
                                     parameters,
-                                    variant0_name.as_ref().map(|node| {
-                                        gren_syntax_node_unbox(node)
-                                    }),
-                                    variant0_values,
+                                    variant0_name
+                                        .as_ref()
+                                        .map(|node| { gren_syntax_node_unbox(node) }),
+                                    variant0_maybe_value.as_ref().map(gren_syntax_node_as_ref),
                                     variant1_up,
                                 ),
                             );
@@ -5839,7 +5842,7 @@ fn variable_declaration_completions_into(
                 parameters,
                 equals_key_symbol_range: _,
                 variant0_name,
-                variant0_values,
+                variant0_value: variant0_maybe_value,
                 variant1_up,
             } => {
                 if let Some(choice_type_name_node) = maybe_choice_type_name
@@ -5858,10 +5861,8 @@ fn variable_declaration_completions_into(
                             Some(gren_syntax_node_unbox(choice_type_name_node)),
                             origin_module_declaration_documentation,
                             parameters,
-                            variant0_name
-                                .as_ref()
-                                .map(gren_syntax_node_unbox),
-                            variant0_values,
+                            variant0_name.as_ref().map(gren_syntax_node_unbox),
+                            variant0_maybe_value.as_ref().map(gren_syntax_node_as_ref),
                             variant1_up,
                         ),
                     );
@@ -5996,7 +5997,7 @@ fn type_declaration_completions_into(
                 parameters,
                 equals_key_symbol_range: _,
                 variant0_name: maybe_variant0_name,
-                variant0_values,
+                variant0_value: variant0_maybe_value,
                 variant1_up,
             } => {
                 if let Some(name_node) = maybe_name.as_ref()
@@ -6016,10 +6017,8 @@ fn type_declaration_completions_into(
                                     Some(gren_syntax_node_unbox(name_node)),
                                     origin_module_declaration_documentation,
                                     parameters,
-                                    maybe_variant0_name
-                                        .as_ref()
-                                        .map(gren_syntax_node_unbox),
-                                    variant0_values,
+                                    maybe_variant0_name.as_ref().map(gren_syntax_node_unbox),
+                                    variant0_maybe_value.as_ref().map(gren_syntax_node_as_ref),
                                     variant1_up,
                                 ),
                             },
@@ -6182,7 +6181,7 @@ fn respond_to_document_symbols(
                     parameters: _,
                     equals_key_symbol_range: _,
                     variant0_name,
-                    variant0_values,
+                    variant0_value: variant0_maybe_value,
                     variant1_up,
                 } => {
                     let name_node = maybe_name.as_ref()?;
@@ -6203,8 +6202,8 @@ fn respond_to_document_symbols(
                                         variant0_name_node,
                                         lsp_types::Range {
                                             start: variant0_name_node.range.start,
-                                            end: variant0_values
-                                                .last()
+                                            end: variant0_maybe_value
+                                                .as_ref()
                                                 .map(|node| node.range.end)
                                                 .unwrap_or(variant0_name_node.range.end),
                                         },
@@ -6218,8 +6217,8 @@ fn respond_to_document_symbols(
                                         lsp_types::Range {
                                             start: variant_name_node.range.start,
                                             end: variant
-                                                .values
-                                                .last()
+                                                .value
+                                                .as_ref()
                                                 .map(|node| node.range.end)
                                                 .unwrap_or(variant_name_node.range.end),
                                         },
@@ -7153,7 +7152,7 @@ enum GrenSyntaxPattern {
     Record(Vec<GrenSyntaxNode<Box<str>>>),
     Variant {
         reference: GrenSyntaxNode<GrenQualifiedName>,
-        values: Vec<GrenSyntaxNode<GrenSyntaxPattern>>,
+        value: Option<GrenSyntaxNode<Box<GrenSyntaxPattern>>>,
     },
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -7330,7 +7329,7 @@ enum GrenSyntaxDeclaration {
         parameters: Vec<GrenSyntaxNode<Box<str>>>,
         equals_key_symbol_range: Option<lsp_types::Range>,
         variant0_name: Option<GrenSyntaxNode<Box<str>>>,
-        variant0_values: Vec<GrenSyntaxNode<GrenSyntaxType>>,
+        variant0_value: Option<GrenSyntaxNode<GrenSyntaxType>>,
         variant1_up: Vec<GrenSyntaxChoiceTypeDeclarationTailingVariant>,
     },
     Operator {
@@ -7370,7 +7369,7 @@ enum GrenSyntaxInfixDirection {
 struct GrenSyntaxChoiceTypeDeclarationTailingVariant {
     or_key_symbol_range: lsp_types::Range,
     name: Option<GrenSyntaxNode<Box<str>>>,
-    values: Vec<GrenSyntaxNode<GrenSyntaxType>>,
+    value: Option<GrenSyntaxNode<GrenSyntaxType>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -7790,7 +7789,7 @@ fn gren_syntax_module_create_origin_lookup<'a>(
                 parameters: _,
                 equals_key_symbol_range: _,
                 variant0_name: maybe_variant0_name,
-                variant0_values: _,
+                variant0_value: _,
                 variant1_up,
             } => {
                 if let Some(name_node) = maybe_name {
@@ -7980,7 +7979,7 @@ fn gren_syntax_module_create_origin_lookup<'a>(
                                                 equals_key_symbol_range: _,
                                                 variant0_name:
                                                     maybe_imported_module_choice_type_variant0_name,
-                                                variant0_values: _,
+                                                variant0_value: _,
                                                 variant1_up: imported_module_choice_type_variant1_up,
                                             } = &declaration_node.value
                                             && Some(choice_type_expose_name.value.as_ref())
@@ -8135,7 +8134,7 @@ fn gren_syntax_module_exposed_symbols(gren_syntax_module: &GrenSyntaxModule) -> 
                                 parameters: _,
                                 equals_key_symbol_range: _,
                                 variant0_name: maybe_exposed_choice_type_variant0_name,
-                                variant0_values: _,
+                                variant0_value: _,
                                 variant1_up: exposed_choice_type_variant1_up,
                             } = &declaration_node.value
                                 && choice_type_expose_name.value
@@ -8861,13 +8860,16 @@ fn gren_syntax_pattern_not_parenthesized_into(
                 }
             }
         }
-        GrenSyntaxPattern::Variant { reference, values } => {
+        GrenSyntaxPattern::Variant {
+            reference,
+            value: maybe_value,
+        } => {
             gren_qualified_name_into(so_far, &reference.value);
-            for value_node in values {
+            if let Some(value_node) = maybe_value {
                 so_far.push(' ');
                 gren_syntax_pattern_parenthesized_if_space_separated_into(
                     so_far,
-                    gren_syntax_node_as_ref(value_node),
+                    gren_syntax_node_unbox(value_node),
                 );
             }
         }
@@ -11325,7 +11327,7 @@ fn gren_syntax_declaration_into(
             parameters,
             equals_key_symbol_range: _,
             variant0_name: maybe_variant0_name,
-            variant0_values,
+            variant0_value: variant0_maybe_value,
             variant1_up,
         } => {
             gren_syntax_choice_type_declaration_into(
@@ -11333,14 +11335,10 @@ fn gren_syntax_declaration_into(
                 comments,
                 |qualified| qualified.qualification,
                 declaration_node.range,
-                maybe_name
-                    .as_ref()
-                    .map(gren_syntax_node_unbox),
+                maybe_name.as_ref().map(gren_syntax_node_unbox),
                 parameters,
-                maybe_variant0_name
-                    .as_ref()
-                    .map(gren_syntax_node_unbox),
-                variant0_values,
+                maybe_variant0_name.as_ref().map(gren_syntax_node_unbox),
+                variant0_maybe_value.as_ref().map(gren_syntax_node_as_ref),
                 variant1_up,
             );
         }
@@ -11381,9 +11379,7 @@ fn gren_syntax_declaration_into(
                 comments,
                 |qualified| qualified.qualification,
                 declaration_node.range,
-                maybe_name
-                    .as_ref()
-                    .map(gren_syntax_node_unbox),
+                maybe_name.as_ref().map(gren_syntax_node_unbox),
                 maybe_type.as_ref().map(gren_syntax_node_as_ref),
             );
         }
@@ -11399,9 +11395,7 @@ fn gren_syntax_declaration_into(
                 comments,
                 |qualified| qualified.qualification,
                 declaration_node.range,
-                maybe_name
-                    .as_ref()
-                    .map(gren_syntax_node_unbox),
+                maybe_name.as_ref().map(gren_syntax_node_unbox),
                 parameters,
                 maybe_type.as_ref().map(gren_syntax_node_as_ref),
             );
@@ -11572,7 +11566,7 @@ fn gren_syntax_choice_type_declaration_into<'a>(
     maybe_name: Option<GrenSyntaxNode<&str>>,
     parameters: &[GrenSyntaxNode<Box<str>>],
     maybe_variant0_name: Option<GrenSyntaxNode<&str>>,
-    variant0_values: &'a [GrenSyntaxNode<GrenSyntaxType>],
+    variant0_maybe_value: Option<GrenSyntaxNode<&'a GrenSyntaxType>>,
     variant1_up: &'a [GrenSyntaxChoiceTypeDeclarationTailingVariant],
 ) {
     let mut previous_syntax_end: lsp_types::Position = declaration_range.start;
@@ -11630,7 +11624,7 @@ fn gren_syntax_choice_type_declaration_into<'a>(
         assign_qualification,
         previous_syntax_end,
         maybe_variant0_name,
-        variant0_values,
+        variant0_maybe_value,
     );
     for variant in variant1_up {
         linebreak_indented_into(so_far, 4);
@@ -11640,10 +11634,11 @@ fn gren_syntax_choice_type_declaration_into<'a>(
             comments,
             assign_qualification,
             previous_syntax_end,
-            variant.name.as_ref().map(|variant_name_node| {
-                gren_syntax_node_unbox(variant_name_node)
-            }),
-            &variant.values,
+            variant
+                .name
+                .as_ref()
+                .map(|variant_name_node| gren_syntax_node_unbox(variant_name_node)),
+            variant.value.as_ref().map(gren_syntax_node_as_ref),
         );
     }
 }
@@ -11653,7 +11648,7 @@ fn gren_syntax_choice_type_declaration_variant_into<'a>(
     assign_qualification: impl Fn(GrenQualified<'a>) -> &'a str + Copy,
     mut previous_syntax_end: lsp_types::Position,
     maybe_variant_name: Option<GrenSyntaxNode<&str>>,
-    variant_values: &'a [GrenSyntaxNode<GrenSyntaxType>],
+    variant_maybe_value: Option<GrenSyntaxNode<&'a GrenSyntaxType>>,
 ) -> lsp_types::Position {
     if let Some(variant_name_node) = maybe_variant_name {
         gren_syntax_comments_then_linebreak_indented_into(
@@ -11670,7 +11665,7 @@ fn gren_syntax_choice_type_declaration_variant_into<'a>(
         so_far.push_str(variant_name_node.value);
         previous_syntax_end = variant_name_node.range.end;
     }
-    let Some(variant_last_value_node) = variant_values.last() else {
+    let Some(variant_last_value_node) = variant_maybe_value else {
         return previous_syntax_end;
     };
     let line_span: LineSpan = gren_syntax_range_line_span(
@@ -11680,7 +11675,7 @@ fn gren_syntax_choice_type_declaration_variant_into<'a>(
         },
         comments,
     );
-    for value_node in variant_values {
+    if let Some(value_node) = variant_maybe_value {
         space_or_linebreak_indented_into(so_far, line_span, 8);
         gren_syntax_comments_then_linebreak_indented_into(
             so_far,
@@ -11699,7 +11694,7 @@ fn gren_syntax_choice_type_declaration_variant_into<'a>(
             assign_qualification,
             comments,
             value_node.range,
-            gren_syntax_type_to_unparenthesized(gren_syntax_node_as_ref(value_node)),
+            gren_syntax_type_to_unparenthesized(value_node),
         );
         previous_syntax_end = value_node.range.end;
     }
@@ -12007,7 +12002,7 @@ fn gren_syntax_declaration_find_reference_at_position<'a>(
                 parameters,
                 equals_key_symbol_range: _,
                 variant0_name: maybe_variant0_name,
-                variant0_values,
+                variant0_value: variant0_maybe_value,
                 variant1_up,
             } => {
                 if let Some(name_node) = maybe_name
@@ -12049,7 +12044,7 @@ fn gren_syntax_declaration_find_reference_at_position<'a>(
                             }
                         })
                         .or_else(|| {
-                            variant0_values.iter().find_map(|variant_value| {
+                            variant0_maybe_value.as_ref().and_then(|variant_value| {
                                 gren_syntax_type_find_reference_at_position(
                                     gren_syntax_declaration_node.value,
                                     gren_syntax_node_as_ref(variant_value),
@@ -12074,7 +12069,7 @@ fn gren_syntax_declaration_find_reference_at_position<'a>(
                                         range: variant_name_node.range,
                                     })
                                 } else {
-                                    variant.values.iter().find_map(|variant_value| {
+                                    variant.value.as_ref().and_then(|variant_value| {
                                         gren_syntax_type_find_reference_at_position(
                                             gren_syntax_declaration_node.value,
                                             gren_syntax_node_as_ref(variant_value),
@@ -12295,7 +12290,10 @@ fn gren_syntax_pattern_find_reference_at_position<'a>(
         GrenSyntaxPattern::Record(_) => None,
         GrenSyntaxPattern::String { .. } => None,
         GrenSyntaxPattern::Variable(_) => None,
-        GrenSyntaxPattern::Variant { reference, values } => {
+        GrenSyntaxPattern::Variant {
+            reference,
+            value: maybe_value,
+        } => {
             if lsp_range_includes_position(reference.range, position) {
                 Some(GrenSyntaxNode {
                     value: GrenSyntaxSymbol::VariableOrVariantOrOperator {
@@ -12306,9 +12304,9 @@ fn gren_syntax_pattern_find_reference_at_position<'a>(
                     range: reference.range,
                 })
             } else {
-                values.iter().find_map(|value| {
+                maybe_value.as_ref().and_then(|value| {
                     gren_syntax_pattern_find_reference_at_position(
-                        gren_syntax_node_as_ref(value),
+                        gren_syntax_node_unbox(value),
                         position,
                     )
                 })
@@ -13150,7 +13148,7 @@ fn gren_syntax_declaration_uses_of_reference_into(
             parameters,
             equals_key_symbol_range: _,
             variant0_name: maybe_variant0_name,
-            variant0_values,
+            variant0_value: variant0_maybe_value,
             variant1_up,
         } => {
             if let Some(name_node) = maybe_name
@@ -13182,7 +13180,7 @@ fn gren_syntax_declaration_uses_of_reference_into(
                 uses_so_far.push(variant0_name_node.range);
                 return;
             }
-            for variant0_value in variant0_values {
+            if let Some(variant0_value) = variant0_maybe_value {
                 gren_syntax_type_uses_of_reference_into(
                     uses_so_far,
                     module_origin_lookup,
@@ -13201,7 +13199,7 @@ fn gren_syntax_declaration_uses_of_reference_into(
                     uses_so_far.push(variant_name_node.range);
                     return;
                 }
-                for variant0_value in variant.values.iter() {
+                if let Some(variant0_value) = &variant.value {
                     gren_syntax_type_uses_of_reference_into(
                         uses_so_far,
                         module_origin_lookup,
@@ -13954,7 +13952,10 @@ fn gren_syntax_pattern_uses_of_reference_into(
         GrenSyntaxPattern::Record(_) => {}
         GrenSyntaxPattern::String { .. } => {}
         GrenSyntaxPattern::Variable(_) => {}
-        GrenSyntaxPattern::Variant { reference, values } => {
+        GrenSyntaxPattern::Variant {
+            reference,
+            value: maybe_value,
+        } => {
             let module_origin: &str = look_up_origin_module(
                 module_origin_lookup,
                 GrenQualified {
@@ -13994,11 +13995,11 @@ fn gren_syntax_pattern_uses_of_reference_into(
                     ),
                 });
             }
-            for value in values {
+            if let Some(value) = maybe_value {
                 gren_syntax_pattern_uses_of_reference_into(
                     uses_so_far,
                     module_origin_lookup,
-                    gren_syntax_node_as_ref(value),
+                    gren_syntax_node_unbox(value),
                     symbol_to_collect_uses_of,
                 );
             }
@@ -14077,12 +14078,12 @@ fn gren_syntax_pattern_bindings_into<'a>(
         }
         GrenSyntaxPattern::Variant {
             reference: _,
-            values,
+            value: maybe_value,
         } => {
-            for value_node in values {
+            if let Some(value_node) = maybe_value {
                 gren_syntax_pattern_bindings_into(
                     bindings_so_far,
-                    gren_syntax_node_as_ref(value_node),
+                    gren_syntax_node_unbox(value_node),
                 );
             }
         }
@@ -14582,7 +14583,7 @@ fn gren_syntax_highlight_declaration_into(
             parameters,
             equals_key_symbol_range: maybe_equals_key_symbol_range,
             variant0_name: maybe_variant0_name,
-            variant0_values,
+            variant0_value: variant0_maybe_value,
             variant1_up,
         } => {
             highlighted_so_far.push(GrenSyntaxNode {
@@ -14616,7 +14617,7 @@ fn gren_syntax_highlight_declaration_into(
                     value: GrenSyntaxHighlightKind::Variant,
                 });
             }
-            for variant0_value_node in variant0_values {
+            if let Some(variant0_value_node) = variant0_maybe_value {
                 gren_syntax_highlight_type_into(
                     highlighted_so_far,
                     gren_syntax_node_as_ref(variant0_value_node),
@@ -14633,7 +14634,7 @@ fn gren_syntax_highlight_declaration_into(
                         value: GrenSyntaxHighlightKind::Variant,
                     });
                 }
-                for variant_value_node in variant.values.iter() {
+                if let Some(variant_value_node) = &variant.value {
                     gren_syntax_highlight_type_into(
                         highlighted_so_far,
                         gren_syntax_node_as_ref(variant_value_node),
@@ -14890,7 +14891,7 @@ fn gren_syntax_highlight_pattern_into(
         }
         GrenSyntaxPattern::Variant {
             reference: reference_node,
-            values,
+            value: values,
         } => {
             gren_syntax_highlight_qualified_into(
                 highlighted_so_far,
@@ -14903,10 +14904,10 @@ fn gren_syntax_highlight_pattern_into(
                 },
                 GrenSyntaxHighlightKind::Variant,
             );
-            for value_node in values {
+            if let Some(value_node) = values {
                 gren_syntax_highlight_pattern_into(
                     highlighted_so_far,
-                    gren_syntax_node_as_ref(value_node),
+                    gren_syntax_node_unbox(value_node),
                 );
             }
         }
@@ -16695,7 +16696,7 @@ fn parse_gren_syntax_pattern_not_space_separated(
             parse_gren_qualified_uppercase_reference_node(state).map(|reference_node| {
                 GrenSyntaxPattern::Variant {
                     reference: reference_node,
-                    values: vec![],
+                    value: None,
                 }
             })
         })
@@ -16756,20 +16757,12 @@ fn parse_gren_syntax_pattern_construct_node(
 ) -> Option<GrenSyntaxNode<GrenSyntaxPattern>> {
     let reference_node: GrenSyntaxNode<GrenQualifiedName> =
         parse_gren_qualified_uppercase_reference_node(state)?;
-    let mut values: Vec<GrenSyntaxNode<GrenSyntaxPattern>> = Vec::new();
-    let mut variant_end_position: lsp_types::Position = reference_node.range.end;
-    'parsing_arguments: loop {
-        parse_gren_whitespace_and_comments(state);
-        match parse_gren_syntax_pattern_not_space_separated_node(state) {
-            None => {
-                break 'parsing_arguments;
-            }
-            Some(value_node) => {
-                variant_end_position = value_node.range.end;
-                values.push(value_node);
-            }
-        }
-    }
+    parse_gren_whitespace_and_comments(state);
+    let maybe_value = parse_gren_syntax_pattern_not_space_separated_node(state);
+    let variant_end_position: lsp_types::Position = maybe_value
+        .as_ref()
+        .map(|value_node| value_node.range.end)
+        .unwrap_or(reference_node.range.end);
     Some(GrenSyntaxNode {
         range: lsp_types::Range {
             start: reference_node.range.start,
@@ -16777,7 +16770,7 @@ fn parse_gren_syntax_pattern_construct_node(
         },
         value: GrenSyntaxPattern::Variant {
             reference: reference_node,
-            values: values,
+            value: maybe_value.map(gren_syntax_node_box),
         },
     })
 }
@@ -17917,15 +17910,15 @@ fn parse_gren_syntax_declaration_choice_type_or_type_alias_node(
             let maybe_variant0_name: Option<GrenSyntaxNode<Box<str>>> =
                 parse_gren_uppercase_node(state);
             parse_gren_whitespace_and_comments(state);
-            let mut variant0_values: Vec<GrenSyntaxNode<GrenSyntaxType>> = Vec::new();
+            let variant0_maybe_value: Option<GrenSyntaxNode<GrenSyntaxType>> =
+                parse_gren_syntax_type_not_space_separated_node(state);
             let mut full_end_position: lsp_types::Position = maybe_variant0_name
                 .as_ref()
                 .map(|node| node.range.end)
                 .or_else(|| maybe_equals_key_symbol_range.map(|range| range.end))
                 .unwrap_or(syntax_before_equals_key_symbol_end_location);
-            while let Some(value_node) = parse_gren_syntax_type_not_space_separated_node(state) {
-                full_end_position = value_node.range.end;
-                variant0_values.push(value_node);
+            if let Some(variant0_value_node) = &variant0_maybe_value {
+                full_end_position = variant0_value_node.range.end;
                 parse_gren_whitespace_and_comments(state);
             }
             parse_gren_whitespace_and_comments(state);
@@ -17947,7 +17940,7 @@ fn parse_gren_syntax_declaration_choice_type_or_type_alias_node(
                     parameters: parameters,
                     equals_key_symbol_range: maybe_equals_key_symbol_range,
                     variant0_name: maybe_variant0_name,
-                    variant0_values: variant0_values,
+                    variant0_value: variant0_maybe_value,
                     variant1_up: variant1_up,
                 },
             }
@@ -17964,14 +17957,14 @@ fn parse_gren_syntax_choice_type_declaration_trailing_variant_node(
     }
     let maybe_name: Option<GrenSyntaxNode<Box<str>>> = parse_gren_uppercase_node(state);
     parse_gren_whitespace_and_comments(state);
-    let mut values: Vec<GrenSyntaxNode<GrenSyntaxType>> = Vec::new();
+    let maybe_value: Option<GrenSyntaxNode<GrenSyntaxType>> =
+        parse_gren_syntax_type_not_space_separated_node(state);
     let mut full_end_position: lsp_types::Position = maybe_name
         .as_ref()
         .map(|node| node.range.end)
         .unwrap_or_else(|| or_key_symbol_range.end);
-    while let Some(value_node) = parse_gren_syntax_type_not_space_separated_node(state) {
+    if let Some(value_node) = &maybe_value {
         full_end_position = value_node.range.end;
-        values.push(value_node);
         parse_gren_whitespace_and_comments(state);
     }
     Some(GrenSyntaxNode {
@@ -17982,7 +17975,7 @@ fn parse_gren_syntax_choice_type_declaration_trailing_variant_node(
         value: GrenSyntaxChoiceTypeDeclarationTailingVariant {
             or_key_symbol_range: or_key_symbol_range,
             name: maybe_name,
-            values: values,
+            value: maybe_value,
         },
     })
 }

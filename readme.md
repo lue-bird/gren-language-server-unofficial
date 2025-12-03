@@ -11,7 +11,6 @@ You can also set their paths in the language server settings:
 
 ## TODO
 - support non-punned record patterns
-- remove support for 2+ variant values on pattern and custom type declaration
 - edit the vscode language grammar (ugh)
 
 ## editor setups
