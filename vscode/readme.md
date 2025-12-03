@@ -1,9 +1,8 @@
 vscode extension for [gren](https://gren-lang.org/) using [gren-language-server-unofficial](https://github.com/lue-bird/gren-language-server-unofficial). Having it installed is a strict requirement.
 
 ## settings
-- `gren-language-server-unofficial.grenPath: string`: compiler executable, default `"gren"`
-- `gren-language-server-unofficial.grenTestPath: string`: test runner executable, default `"gren-test"`
-- `gren-language-server-unofficial.grenFormatPath: "builtin" | string`: formatter executable, default `"gren-format"`. `"builtin"` is a fast rust formatter that is mostly but not fully compatible
+- `gren-language-server-unofficial.grenPath: string`: compiler executable, default `"gren"`. If the language server can't find it in the `$PATH`, please set this option to the path that `which gren` prints :)
+- `gren-language-server-unofficial.grenFormatPath: "builtin" | string`: formatter executable, default `"builtin"`. `"builtin"` is a fast, unofficial rust formatter
 
 ## setup for developing
 ```bash
