@@ -10,7 +10,6 @@ You can also set their paths in the language server settings:
 - `gren-language-server-unofficial.grenFormatPath: "builtin" | string`: formatter executable, default `"builtin"`. `"builtin"` is a fast, unofficial rust formatter
 
 ## TODO
-- support non-punned record patterns
 - edit the vscode language grammar (ugh)
 
 ## editor setups
@@ -66,6 +65,7 @@ auto-format = true
 - `gren.json` help
 
 ## not sure (Please give me feedback on this)
+- support renaming punned record fields by adding `{ originalName = newName }`
 - show all module exposes when hovering `(..)` (only if I have time and there is interest)
 - add code actions like "expose (including variants)", "inline", "inline all uses" (leaning towards no as it is fairly complicated, though it is very useful for sure)
 - show function parameter names (leaning towards no, as they are often confusing if they are curried, reveal non-exposed variant patterns, have more parameters than the type suggests, are undescriptive etc)

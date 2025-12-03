@@ -7149,11 +7149,17 @@ enum GrenSyntaxPattern {
         variable: Option<GrenSyntaxNode<Box<str>>>,
     },
     Parenthesized(Option<GrenSyntaxNode<Box<GrenSyntaxPattern>>>),
-    Record(Vec<GrenSyntaxNode<Box<str>>>),
+    Record(Vec<GrenSyntaxPatternField>),
     Variant {
         reference: GrenSyntaxNode<GrenQualifiedName>,
         value: Option<GrenSyntaxNode<Box<GrenSyntaxPattern>>>,
     },
+}
+#[derive(Clone, Debug, PartialEq)]
+struct GrenSyntaxPatternField {
+    name: GrenSyntaxNode<Box<str>>,
+    equals_key_symbol_range: Option<lsp_types::Range>,
+    value: Option<GrenSyntaxNode<GrenSyntaxPattern>>,
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum GrenSyntaxStringQuotingStyle {
@@ -8849,12 +8855,12 @@ fn gren_syntax_pattern_not_parenthesized_into(
                 None => {
                     so_far.push_str("{}");
                 }
-                Some(field0_name) => {
+                Some(field0) => {
                     so_far.push_str("{ ");
-                    so_far.push_str(&field0_name.value);
-                    for field_name in field_names_iterator {
+                    gren_syntax_pattern_field_into(so_far, field0);
+                    for field in field_names_iterator {
                         so_far.push_str(", ");
-                        so_far.push_str(&field_name.value);
+                        gren_syntax_pattern_field_into(so_far, field);
                     }
                     so_far.push_str(" }");
                 }
@@ -8872,6 +8878,23 @@ fn gren_syntax_pattern_not_parenthesized_into(
                     gren_syntax_node_unbox(value_node),
                 );
             }
+        }
+    }
+}
+fn gren_syntax_pattern_field_into(so_far: &mut String, field: &GrenSyntaxPatternField) {
+    so_far.push_str(&field.name.value);
+    match &field.value {
+        None => {
+            if field.equals_key_symbol_range.is_some() {
+                so_far.push_str(" = ");
+            }
+        }
+        Some(field_value) => {
+            so_far.push_str(" = ");
+            gren_syntax_pattern_not_parenthesized_into(
+                so_far,
+                gren_syntax_node_as_ref(field_value),
+            );
         }
     }
 }
@@ -14064,10 +14087,9 @@ fn gren_syntax_pattern_bindings_into<'a>(
             }
         }
         GrenSyntaxPattern::Record(field_names) => {
-            bindings_so_far.extend(field_names.iter().map(|field_name_node| GrenLocalBinding {
-                origin: LocalBindingOrigin::PatternRecordField(field_name_node.range),
-                name: &field_name_node.value,
-            }));
+            for field in field_names {
+                gren_syntax_pattern_field_bindings_into(bindings_so_far, field);
+            }
         }
         GrenSyntaxPattern::String { .. } => {}
         GrenSyntaxPattern::Variable(variable) => {
@@ -14086,6 +14108,29 @@ fn gren_syntax_pattern_bindings_into<'a>(
                     gren_syntax_node_unbox(value_node),
                 );
             }
+        }
+    }
+}
+fn gren_syntax_pattern_field_bindings_into<'a>(
+    bindings_so_far: &mut Vec<GrenLocalBinding<'a>>,
+    gren_syntax_pattern_field: &'a GrenSyntaxPatternField,
+) {
+    match &gren_syntax_pattern_field.value {
+        None => {
+            if gren_syntax_pattern_field.equals_key_symbol_range.is_none() {
+                bindings_so_far.push(GrenLocalBinding {
+                    name: &gren_syntax_pattern_field.name.value,
+                    origin: LocalBindingOrigin::PatternRecordField(
+                        gren_syntax_pattern_field.name.range,
+                    ),
+                });
+            }
+        }
+        Some(field_value) => {
+            gren_syntax_pattern_bindings_into(
+                bindings_so_far,
+                gren_syntax_node_as_ref(field_value),
+            );
         }
     }
 }
@@ -14866,12 +14911,44 @@ fn gren_syntax_highlight_pattern_into(
                 );
             }
         }
-        GrenSyntaxPattern::Record(field_names) => {
-            for field_name_node in field_names {
-                highlighted_so_far.push(GrenSyntaxNode {
-                    range: field_name_node.range,
-                    value: GrenSyntaxHighlightKind::Variable,
-                });
+        GrenSyntaxPattern::Record(fields) => {
+            for field in fields {
+                match &field.value {
+                    None => match field.equals_key_symbol_range {
+                        None => {
+                            highlighted_so_far.push(GrenSyntaxNode {
+                                range: field.name.range,
+                                value: GrenSyntaxHighlightKind::Variable,
+                            });
+                        }
+                        Some(equals_key_symbol_range) => {
+                            highlighted_so_far.push(GrenSyntaxNode {
+                                range: equals_key_symbol_range,
+                                value: GrenSyntaxHighlightKind::Field,
+                            });
+                            highlighted_so_far.push(GrenSyntaxNode {
+                                range: field.name.range,
+                                value: GrenSyntaxHighlightKind::Field,
+                            });
+                        }
+                    },
+                    Some(field_value) => {
+                        highlighted_so_far.push(GrenSyntaxNode {
+                            range: field.name.range,
+                            value: GrenSyntaxHighlightKind::Field,
+                        });
+                        if let Some(equals_key_symbol_range) = field.equals_key_symbol_range {
+                            highlighted_so_far.push(GrenSyntaxNode {
+                                range: equals_key_symbol_range,
+                                value: GrenSyntaxHighlightKind::Field,
+                            });
+                        }
+                        gren_syntax_highlight_pattern_into(
+                            highlighted_so_far,
+                            gren_syntax_node_as_ref(field_value),
+                        );
+                    }
+                }
             }
         }
         GrenSyntaxPattern::String {
@@ -16636,7 +16713,7 @@ fn parse_gren_syntax_pattern_space_separated_node_starting_at_any_indent(
     state: &mut ParseState,
 ) -> Option<GrenSyntaxNode<GrenSyntaxPattern>> {
     let start_pattern: GrenSyntaxNode<GrenSyntaxPattern> =
-        parse_gren_syntax_pattern_not_as_or_cons_node(state)?;
+        parse_gren_syntax_pattern_not_as_node(state)?;
     parse_gren_whitespace_and_comments(state);
     match parse_symbol_as_range(state, "as") {
         None => Some(start_pattern),
@@ -16662,7 +16739,7 @@ fn parse_gren_syntax_pattern_space_separated_node_starting_at_any_indent(
     }
 }
 
-fn parse_gren_syntax_pattern_not_as_or_cons_node(
+fn parse_gren_syntax_pattern_not_as_node(
     state: &mut ParseState,
 ) -> Option<GrenSyntaxNode<GrenSyntaxPattern>> {
     parse_gren_syntax_pattern_construct_node(state).or_else(|| {
@@ -16724,20 +16801,34 @@ fn parse_gren_syntax_pattern_record(state: &mut ParseState) -> Option<GrenSyntax
     while parse_symbol(state, ",") {
         parse_gren_whitespace_and_comments(state);
     }
-    let mut field_names: Vec<GrenSyntaxNode<Box<str>>> = Vec::new();
-    while let Some(field_name_node) = if state.position.character <= u32::from(state.indent) {
-        None
-    } else {
-        parse_gren_lowercase_as_node(state)
-    } {
-        field_names.push(field_name_node);
+    let mut fields: Vec<GrenSyntaxPatternField> = Vec::new();
+    while let Some(field) = parse_gren_syntax_pattern_field(state) {
+        fields.push(field);
         parse_gren_whitespace_and_comments(state);
         while parse_symbol(state, ",") {
             parse_gren_whitespace_and_comments(state);
         }
     }
     let _: bool = parse_symbol(state, "}");
-    Some(GrenSyntaxPattern::Record(field_names))
+    Some(GrenSyntaxPattern::Record(fields))
+}
+fn parse_gren_syntax_pattern_field(state: &mut ParseState) -> Option<GrenSyntaxPatternField> {
+    if state.position.character <= u32::from(state.indent) {
+        return None;
+    }
+    let Some(field_name_node) = parse_gren_lowercase_as_node(state) else {
+        return None;
+    };
+    parse_gren_whitespace_and_comments(state);
+    let maybe_equals_key_symbol_range: Option<lsp_types::Range> = parse_symbol_as_range(state, "=");
+    parse_gren_whitespace_and_comments(state);
+    let maybe_value: Option<GrenSyntaxNode<GrenSyntaxPattern>> =
+        parse_gren_syntax_pattern_space_separated_node(state);
+    Some(GrenSyntaxPatternField {
+        name: field_name_node,
+        equals_key_symbol_range: maybe_equals_key_symbol_range,
+        value: maybe_value,
+    })
 }
 fn parse_gren_syntax_pattern_not_space_separated_node(
     state: &mut ParseState,
