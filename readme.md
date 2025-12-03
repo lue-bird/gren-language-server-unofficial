@@ -11,9 +11,8 @@ You can also set their paths in the language server settings:
 
 ## TODO
 - support non-punned record patterns
-- remove special handling of record type alias constructors
 - remove support for 2+ variant values on pattern and custom type declaration
-- TODO edit the vscode language grammar (ugh)
+- edit the vscode language grammar (ugh)
 
 ## editor setups
 feel free to contribute, as I only use vscodium

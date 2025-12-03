@@ -2533,36 +2533,7 @@ fn respond_to_hover(
                                 None
                             }
                         }
-                        GrenSyntaxDeclaration::TypeAlias {
-                            alias_keyword_range: _,
-                            name: maybe_origin_module_declaration_name,
-                            parameters: origin_module_declaration_parameters,
-                            equals_key_symbol_range: _,
-                            type_,
-                        } => {
-                            if let Some(origin_module_declaration_name_node) = maybe_origin_module_declaration_name
-                                && origin_module_declaration_name_node.value.as_ref() == hovered_name
-                            {
-                                Some(format!(
-                                    "constructor function for record\n{}",
-                                    &present_type_alias_declaration_info_markdown(
-                                        &origin_module_origin_lookup,
-                                        hovered_module_origin,
-                                        &hovered_project_module_state.module.syntax.comments,
-                                        origin_module_declaration_node.range,
-                                        Some(gren_syntax_node_as_ref_map(origin_module_declaration_name_node, Box::as_ref)),
-                                        origin_module_declaration
-                                            .documentation
-                                            .as_ref()
-                                            .map(|node| node.value.as_ref()),
-                                        origin_module_declaration_parameters,
-                                        type_.as_ref().map(gren_syntax_node_as_ref)
-                                    )
-                                ))
-                            } else {
-                                None
-                            }
-                        }
+                        GrenSyntaxDeclaration::TypeAlias { .. } => None,
                         GrenSyntaxDeclaration::Variable {
                             start_name: origin_module_declaration_name_node,
                             signature: origin_module_declaration_maybe_signature,
@@ -3033,7 +3004,6 @@ fn respond_to_goto_definition(
                             name: maybe_origin_module_declaration_name,
                             ..
                         } => {
-                            // record type alias constructor function
                             if let Some(origin_module_declaration_name_node) =
                                 maybe_origin_module_declaration_name
                                 && origin_module_declaration_name_node.value.as_ref() == goto_name
@@ -3272,20 +3242,7 @@ fn respond_to_goto_definition(
                                 None
                             }
                         }
-                        GrenSyntaxDeclaration::TypeAlias {
-                            name: maybe_origin_module_declaration_name,
-                            ..
-                        } => {
-                            // record type alias constructor function
-                            if let Some(origin_module_declaration_name_node) =
-                                maybe_origin_module_declaration_name
-                                && origin_module_declaration_name_node.value.as_ref() == goto_name
-                            {
-                                Some(origin_module_declaration_name_node.range)
-                            } else {
-                                None
-                            }
-                        }
+                        GrenSyntaxDeclaration::TypeAlias { .. } => None,
                         GrenSyntaxDeclaration::Variable {
                             start_name: origin_module_declaration_name_node,
                             ..
@@ -3638,42 +3595,10 @@ fn respond_to_rename(
                 .unwrap_or("");
             let gren_declared_symbol_to_rename: GrenSymbolToReference =
                 if to_rename_declaration_name.starts_with(char::is_uppercase) {
-                    let to_rename_is_record_type_alias: bool = to_rename_project_module_state
-                        .module
-                        .syntax
-                        .declarations
-                        .iter()
-                        .filter_map(|declaration_or_err| declaration_or_err.as_ref().ok())
-                        .filter_map(|documented_declaration| {
-                            documented_declaration.declaration.as_ref()
-                        })
-                        .any(|declaration_node| match &declaration_node.value {
-                            GrenSyntaxDeclaration::TypeAlias {
-                                type_:
-                                    Some(GrenSyntaxNode {
-                                        value: GrenSyntaxType::Record(_),
-                                        range: _,
-                                    }),
-                                name: Some(record_type_alias_name_node),
-                                ..
-                            } => {
-                                record_type_alias_name_node.value.as_ref()
-                                    == to_rename_declaration_name
-                            }
-                            _ => false,
-                        });
-                    if to_rename_is_record_type_alias {
-                        GrenSymbolToReference::RecordTypeAlias {
-                            module_origin: to_rename_module_origin,
-                            name: to_rename_declaration_name,
-                            including_declaration_name: true,
-                        }
-                    } else {
-                        GrenSymbolToReference::TypeNotRecordAlias {
-                            module_origin: to_rename_module_origin,
-                            name: to_rename_declaration_name,
-                            including_declaration_name: true,
-                        }
+                    GrenSymbolToReference::Type {
+                        module_origin: to_rename_module_origin,
+                        name: to_rename_declaration_name,
+                        including_declaration_name: true,
                     }
                 } else {
                     GrenSymbolToReference::VariableOrVariant {
@@ -3719,43 +3644,10 @@ fn respond_to_rename(
         } => {
             let gren_declared_symbol_to_rename: GrenSymbolToReference =
                 if to_rename_import_expose_name.starts_with(char::is_uppercase) {
-                    let to_rename_is_record_type_alias: bool = to_rename_project_module_state
-                        .module
-                        .syntax
-                        .declarations
-                        .iter()
-                        .filter_map(|declaration_or_err| declaration_or_err.as_ref().ok())
-                        .any(|documented_declaration| {
-                            documented_declaration.declaration.as_ref().is_some_and(
-                                |declaration_node| match &declaration_node.value {
-                                    GrenSyntaxDeclaration::TypeAlias {
-                                        type_:
-                                            Some(GrenSyntaxNode {
-                                                value: GrenSyntaxType::Record(_),
-                                                range: _,
-                                            }),
-                                        name: Some(record_type_alias_name_node),
-                                        ..
-                                    } => {
-                                        record_type_alias_name_node.value.as_ref()
-                                            == to_rename_import_expose_name
-                                    }
-                                    _ => false,
-                                },
-                            )
-                        });
-                    if to_rename_is_record_type_alias {
-                        GrenSymbolToReference::RecordTypeAlias {
-                            module_origin: to_rename_import_expose_origin_module,
-                            name: to_rename_import_expose_name,
-                            including_declaration_name: true,
-                        }
-                    } else {
-                        GrenSymbolToReference::TypeNotRecordAlias {
-                            module_origin: to_rename_import_expose_origin_module,
-                            name: to_rename_import_expose_name,
-                            including_declaration_name: true,
-                        }
+                    GrenSymbolToReference::Type {
+                        module_origin: to_rename_import_expose_origin_module,
+                        name: to_rename_import_expose_name,
+                        including_declaration_name: true,
                     }
                 } else {
                     GrenSymbolToReference::VariableOrVariant {
@@ -3904,49 +3796,12 @@ fn respond_to_rename(
                         name: to_rename_name,
                     },
                 );
-                let to_rename_is_record_type_alias: bool = project_state_get_module_with_name(
-                    state,
-                    to_rename_project_module_state.project,
-                    to_rename_module_origin,
-                )
-                .is_some_and(|(_, to_find_origin_module_state)| {
-                    to_find_origin_module_state
-                        .syntax
-                        .declarations
-                        .iter()
-                        .filter_map(|declaration_or_err| declaration_or_err.as_ref().ok())
-                        .any(|documented_declaration| {
-                            documented_declaration.declaration.as_ref().is_some_and(
-                                |declaration_node| match &declaration_node.value {
-                                    GrenSyntaxDeclaration::TypeAlias {
-                                        type_:
-                                            Some(GrenSyntaxNode {
-                                                value: GrenSyntaxType::Record(_),
-                                                range: _,
-                                            }),
-                                        name: Some(record_type_alias_name_node),
-                                        ..
-                                    } => {
-                                        record_type_alias_name_node.value.as_ref() == to_rename_name
-                                    }
-                                    _ => false,
-                                },
-                            )
-                        })
-                });
-                let symbol_to_find: GrenSymbolToReference = if to_rename_is_record_type_alias {
-                    GrenSymbolToReference::RecordTypeAlias {
-                        module_origin: to_rename_module_origin,
-                        name: to_rename_name,
-                        including_declaration_name: true,
-                    }
-                } else {
+                let symbol_to_find: GrenSymbolToReference =
                     GrenSymbolToReference::VariableOrVariant {
                         module_origin: to_rename_module_origin,
                         name: to_rename_name,
                         including_declaration_name: true,
-                    }
-                };
+                    };
                 state_iter_all_modules(state)
                     .filter_map(|project_module| {
                         let mut all_uses_of_renamed_reference: Vec<lsp_types::Range> = Vec::new();
@@ -3993,50 +3848,11 @@ fn respond_to_rename(
                     name: type_name_to_rename,
                 },
             );
-            let to_rename_is_record_type_alias: bool = project_state_get_module_with_name(
-                state,
-                to_rename_project_module_state.project,
-                to_rename_module_origin,
-            )
-            .is_some_and(|(_, to_rename_module_state)| {
-                to_rename_module_state
-                    .syntax
-                    .declarations
-                    .iter()
-                    .filter_map(|declaration_or_err| declaration_or_err.as_ref().ok())
-                    .any(|documented_declaration| {
-                        documented_declaration.declaration.as_ref().is_some_and(
-                            |declaration_node| match &declaration_node.value {
-                                GrenSyntaxDeclaration::TypeAlias {
-                                    type_:
-                                        Some(GrenSyntaxNode {
-                                            value: GrenSyntaxType::Record(_),
-                                            range: _,
-                                        }),
-                                    name: Some(record_type_alias_name_node),
-                                    ..
-                                } => {
-                                    record_type_alias_name_node.value.as_ref()
-                                        == type_name_to_rename
-                                }
-                                _ => false,
-                            },
-                        )
-                    })
-            });
             let gren_declared_symbol_to_rename: GrenSymbolToReference =
-                if to_rename_is_record_type_alias {
-                    GrenSymbolToReference::RecordTypeAlias {
-                        module_origin: to_rename_module_origin,
-                        name: type_name_to_rename,
-                        including_declaration_name: true,
-                    }
-                } else {
-                    GrenSymbolToReference::TypeNotRecordAlias {
-                        module_origin: to_rename_module_origin,
-                        name: type_name_to_rename,
-                        including_declaration_name: true,
-                    }
+                GrenSymbolToReference::Type {
+                    module_origin: to_rename_module_origin,
+                    name: type_name_to_rename,
+                    including_declaration_name: true,
                 };
             state_iter_all_modules(state)
                 .filter_map(|project_module| {
@@ -4235,44 +4051,10 @@ fn respond_to_references(
             let gren_declared_symbol_to_find: GrenSymbolToReference = if to_find_name
                 .starts_with(char::is_uppercase)
             {
-                let to_find_is_record_type_alias: bool = to_find_project_module_state
-                    .module
-                    .syntax
-                    .declarations
-                    .iter()
-                    .filter_map(|declaration_or_err| declaration_or_err.as_ref().ok())
-                    .any(|documented_declaration| {
-                        documented_declaration.declaration.as_ref().is_some_and(
-                            |declaration_node| match &declaration_node.value {
-                                GrenSyntaxDeclaration::TypeAlias {
-                                    type_:
-                                        Some(GrenSyntaxNode {
-                                            value: GrenSyntaxType::Record(_),
-                                            range: _,
-                                        }),
-                                    name: Some(record_type_alias_name_node),
-                                    ..
-                                } => record_type_alias_name_node.value.as_ref() == to_find_name,
-                                _ => false,
-                            },
-                        )
-                    });
-                if to_find_is_record_type_alias {
-                    GrenSymbolToReference::RecordTypeAlias {
-                        module_origin: to_find_module_origin,
-                        name: to_find_name,
-                        including_declaration_name: references_arguments
-                            .context
-                            .include_declaration,
-                    }
-                } else {
-                    GrenSymbolToReference::TypeNotRecordAlias {
-                        module_origin: to_find_module_origin,
-                        name: to_find_name,
-                        including_declaration_name: references_arguments
-                            .context
-                            .include_declaration,
-                    }
+                GrenSymbolToReference::Type {
+                    module_origin: to_find_module_origin,
+                    name: to_find_name,
+                    including_declaration_name: references_arguments.context.include_declaration,
                 }
             } else {
                 GrenSymbolToReference::VariableOrVariant {
@@ -4326,44 +4108,10 @@ fn respond_to_references(
             let gren_declared_symbol_to_find: GrenSymbolToReference = if to_find_name
                 .starts_with(char::is_uppercase)
             {
-                let to_find_is_record_type_alias: bool = to_find_project_module_state
-                    .module
-                    .syntax
-                    .declarations
-                    .iter()
-                    .filter_map(|declaration_or_err| declaration_or_err.as_ref().ok())
-                    .any(|documented_declaration| {
-                        documented_declaration.declaration.as_ref().is_some_and(
-                            |declaration_node| match &declaration_node.value {
-                                GrenSyntaxDeclaration::TypeAlias {
-                                    type_:
-                                        Some(GrenSyntaxNode {
-                                            value: GrenSyntaxType::Record(_),
-                                            range: _,
-                                        }),
-                                    name: Some(record_type_alias_name_node),
-                                    ..
-                                } => record_type_alias_name_node.value.as_ref() == to_find_name,
-                                _ => false,
-                            },
-                        )
-                    });
-                if to_find_is_record_type_alias {
-                    GrenSymbolToReference::RecordTypeAlias {
-                        module_origin: to_find_module_origin,
-                        name: to_find_name,
-                        including_declaration_name: references_arguments
-                            .context
-                            .include_declaration,
-                    }
-                } else {
-                    GrenSymbolToReference::TypeNotRecordAlias {
-                        module_origin: to_find_module_origin,
-                        name: to_find_name,
-                        including_declaration_name: references_arguments
-                            .context
-                            .include_declaration,
-                    }
+                GrenSymbolToReference::Type {
+                    module_origin: to_find_module_origin,
+                    name: to_find_name,
+                    including_declaration_name: references_arguments.context.include_declaration,
                 }
             } else {
                 GrenSymbolToReference::VariableOrVariant {
@@ -4408,47 +4156,10 @@ fn respond_to_references(
             let gren_declared_symbol_to_find: GrenSymbolToReference = if to_find_import_expose_name
                 .starts_with(char::is_uppercase)
             {
-                let to_find_is_record_type_alias: bool = to_find_project_module_state
-                    .module
-                    .syntax
-                    .declarations
-                    .iter()
-                    .filter_map(|declaration_or_err| declaration_or_err.as_ref().ok())
-                    .any(|documented_declaration| {
-                        documented_declaration.declaration.as_ref().is_some_and(
-                            |declaration_node| match &declaration_node.value {
-                                GrenSyntaxDeclaration::TypeAlias {
-                                    type_:
-                                        Some(GrenSyntaxNode {
-                                            value: GrenSyntaxType::Record(_),
-                                            range: _,
-                                        }),
-                                    name: Some(record_type_alias_name_node),
-                                    ..
-                                } => {
-                                    record_type_alias_name_node.value.as_ref()
-                                        == to_find_import_expose_name
-                                }
-                                _ => false,
-                            },
-                        )
-                    });
-                if to_find_is_record_type_alias {
-                    GrenSymbolToReference::RecordTypeAlias {
-                        module_origin: to_find_import_expose_origin_module,
-                        name: to_find_import_expose_name,
-                        including_declaration_name: references_arguments
-                            .context
-                            .include_declaration,
-                    }
-                } else {
-                    GrenSymbolToReference::TypeNotRecordAlias {
-                        module_origin: to_find_import_expose_origin_module,
-                        name: to_find_import_expose_name,
-                        including_declaration_name: references_arguments
-                            .context
-                            .include_declaration,
-                    }
+                GrenSymbolToReference::Type {
+                    module_origin: to_find_import_expose_origin_module,
+                    name: to_find_import_expose_name,
+                    including_declaration_name: references_arguments.context.include_declaration,
                 }
             } else {
                 GrenSymbolToReference::VariableOrVariant {
@@ -4603,51 +4314,14 @@ fn respond_to_references(
                         name: to_find_name,
                     },
                 );
-                let to_find_is_record_type_alias: bool = project_state_get_module_with_name(
-                    state,
-                    to_find_project_module_state.project,
-                    to_find_module_origin,
-                )
-                .is_some_and(|(_, to_find_origin_module_state)| {
-                    to_find_origin_module_state
-                        .syntax
-                        .declarations
-                        .iter()
-                        .filter_map(|declaration_or_err| declaration_or_err.as_ref().ok())
-                        .any(|documented_declaration| {
-                            documented_declaration.declaration.as_ref().is_some_and(
-                                |declaration_node| match &declaration_node.value {
-                                    GrenSyntaxDeclaration::TypeAlias {
-                                        type_:
-                                            Some(GrenSyntaxNode {
-                                                value: GrenSyntaxType::Record(_),
-                                                range: _,
-                                            }),
-                                        name: Some(record_type_alias_name_node),
-                                        ..
-                                    } => record_type_alias_name_node.value.as_ref() == to_find_name,
-                                    _ => false,
-                                },
-                            )
-                        })
-                });
-                let symbol_to_find: GrenSymbolToReference = if to_find_is_record_type_alias {
-                    GrenSymbolToReference::RecordTypeAlias {
-                        module_origin: to_find_module_origin,
-                        name: to_find_name,
-                        including_declaration_name: references_arguments
-                            .context
-                            .include_declaration,
-                    }
-                } else {
+                let symbol_to_find: GrenSymbolToReference =
                     GrenSymbolToReference::VariableOrVariant {
                         module_origin: to_find_module_origin,
                         name: to_find_name,
                         including_declaration_name: references_arguments
                             .context
                             .include_declaration,
-                    }
-                };
+                    };
                 to_find_project_module_state
                     .project
                     .modules
@@ -4692,54 +4366,11 @@ fn respond_to_references(
                     name: type_name_to_find,
                 },
             );
-            let to_find_is_record_type_alias: bool = project_state_get_module_with_name(
-                state,
-                to_find_project_module_state.project,
-                to_find_module_origin,
-            )
-            .is_some_and(|(_, to_find_module_state)| {
-                to_find_module_state
-                    .syntax
-                    .declarations
-                    .iter()
-                    .filter_map(|declaration_or_err| declaration_or_err.as_ref().ok())
-                    .any(|documented_declaration| {
-                        documented_declaration.declaration.as_ref().is_some_and(
-                            |declaration_node| match &declaration_node.value {
-                                GrenSyntaxDeclaration::TypeAlias {
-                                    type_:
-                                        Some(GrenSyntaxNode {
-                                            value: GrenSyntaxType::Record(_),
-                                            range: _,
-                                        }),
-                                    name: Some(record_type_alias_name_node),
-                                    ..
-                                } => {
-                                    record_type_alias_name_node.value.as_ref() == type_name_to_find
-                                }
-                                _ => false,
-                            },
-                        )
-                    })
-            });
-            let gren_declared_symbol_to_find: GrenSymbolToReference =
-                if to_find_is_record_type_alias {
-                    GrenSymbolToReference::RecordTypeAlias {
-                        module_origin: to_find_module_origin,
-                        name: type_name_to_find,
-                        including_declaration_name: references_arguments
-                            .context
-                            .include_declaration,
-                    }
-                } else {
-                    GrenSymbolToReference::TypeNotRecordAlias {
-                        module_origin: to_find_module_origin,
-                        name: type_name_to_find,
-                        including_declaration_name: references_arguments
-                            .context
-                            .include_declaration,
-                    }
-                };
+            let gren_declared_symbol_to_find: GrenSymbolToReference = GrenSymbolToReference::Type {
+                module_origin: to_find_module_origin,
+                name: type_name_to_find,
+                including_declaration_name: references_arguments.context.include_declaration,
+            };
             to_find_project_module_state
                 .project
                 .modules
@@ -5332,11 +4963,10 @@ fn respond_to_completion(
                                 );
                             completion_items.push(lsp_types::CompletionItem {
                                 label: choice_type_name_node.value.to_string(),
-                                kind: Some(lsp_types::CompletionItemKind::ENUM_MEMBER),
+                                kind: Some(lsp_types::CompletionItemKind::ENUM),
                                 documentation: Some(lsp_types::Documentation::MarkupContent(
                                     lsp_types::MarkupContent {
                                         kind: lsp_types::MarkupKind::Markdown,
-                                        // should the documentation code indicate the variants are hidden?
                                         value: info_markdown.clone(),
                                     },
                                 )),
@@ -5344,11 +4974,11 @@ fn respond_to_completion(
                             });
                             completion_items.push(lsp_types::CompletionItem {
                                 label: format!("{}(..)", choice_type_name_node.value),
-                                kind: Some(lsp_types::CompletionItemKind::ENUM_MEMBER),
+                                kind: Some(lsp_types::CompletionItemKind::ENUM),
                                 documentation: Some(lsp_types::Documentation::MarkupContent(
                                     lsp_types::MarkupContent {
                                         kind: lsp_types::MarkupKind::Markdown,
-                                        value: info_markdown.clone(),
+                                        value: info_markdown,
                                     },
                                 )),
                                 ..lsp_types::CompletionItem::default()
@@ -5844,7 +5474,7 @@ fn respond_to_completion(
                         {
                             completion_items.push(lsp_types::CompletionItem {
                                 label: name_node.value.to_string(),
-                                kind: Some(lsp_types::CompletionItemKind::CONSTRUCTOR),
+                                kind: Some(lsp_types::CompletionItemKind::STRUCT),
                                 documentation: Some(lsp_types::Documentation::MarkupContent(
                                     lsp_types::MarkupContent {
                                         kind: lsp_types::MarkupKind::Markdown,
@@ -6337,46 +5967,7 @@ fn variable_declaration_completions_into(
                     });
                 }
             }
-            GrenSyntaxDeclaration::TypeAlias {
-                alias_keyword_range: _,
-                name: maybe_name,
-                parameters,
-                equals_key_symbol_range: _,
-                type_: maybe_type,
-            } => {
-                if let Some(name_node) = maybe_name
-                    && gren_expose_set_contains_type_not_including_variants(
-                        expose_set,
-                        &name_node.value,
-                    )
-                    && let Some(type_node) = maybe_type
-                    && let GrenSyntaxType::Record(_) = type_node.value
-                {
-                    completion_items.push(lsp_types::CompletionItem {
-                        label: name_node.value.to_string(),
-                        kind: Some(lsp_types::CompletionItemKind::CONSTRUCTOR),
-                        documentation: Some(lsp_types::Documentation::MarkupContent(
-                            lsp_types::MarkupContent {
-                                kind: lsp_types::MarkupKind::Markdown,
-                                value: format!(
-                                    "constructor function for record\n{}",
-                                    &present_type_alias_declaration_info_markdown(
-                                        &module_origin_lookup,
-                                        module_name,
-                                        &module_syntax.comments,
-                                        origin_module_declaration_node.range,
-                                        Some(gren_syntax_node_as_ref_map(name_node, Box::as_ref)),
-                                        origin_module_declaration_documentation,
-                                        parameters,
-                                        Some(gren_syntax_node_as_ref(type_node)),
-                                    )
-                                ),
-                            },
-                        )),
-                        ..lsp_types::CompletionItem::default()
-                    });
-                }
-            }
+            GrenSyntaxDeclaration::TypeAlias { .. } => {}
             GrenSyntaxDeclaration::Variable {
                 start_name: start_name_node,
                 signature: maybe_signature,
@@ -13346,17 +12937,12 @@ enum GrenSymbolToReference<'a> {
     TypeVariable(&'a str),
     // type is tracked separately from VariableOrVariant because e.g. variants and
     // type names are allowed to overlap
-    TypeNotRecordAlias {
+    Type {
         module_origin: &'a str,
         name: &'a str,
         including_declaration_name: bool,
     },
     VariableOrVariant {
-        module_origin: &'a str,
-        name: &'a str,
-        including_declaration_name: bool,
-    },
-    RecordTypeAlias {
         module_origin: &'a str,
         name: &'a str,
         including_declaration_name: bool,
@@ -13389,12 +12975,7 @@ fn gren_syntax_module_uses_of_reference_into(
     }
     let symbol_to_collect_can_occur_here: bool = match symbol_to_collect_uses_of {
         GrenSymbolToReference::ModuleName(module_origin_to_collect_uses_of)
-        | GrenSymbolToReference::RecordTypeAlias {
-            module_origin: module_origin_to_collect_uses_of,
-            name: _,
-            including_declaration_name: _,
-        }
-        | GrenSymbolToReference::TypeNotRecordAlias {
+        | GrenSymbolToReference::Type {
             module_origin: module_origin_to_collect_uses_of,
             name: _,
             including_declaration_name: _,
@@ -13483,17 +13064,12 @@ fn gren_syntax_module_documentation_uses_of_reference_into(
         GrenSymbolToReference::ImportAlias { .. } => None,
         GrenSymbolToReference::TypeVariable(_) => None,
         GrenSymbolToReference::LocalBinding { .. } => None,
-        GrenSymbolToReference::TypeNotRecordAlias {
+        GrenSymbolToReference::Type {
             module_origin: symbol_module_origin,
             name,
             including_declaration_name: _,
         }
         | GrenSymbolToReference::VariableOrVariant {
-            module_origin: symbol_module_origin,
-            name,
-            including_declaration_name: _,
-        }
-        | GrenSymbolToReference::RecordTypeAlias {
             module_origin: symbol_module_origin,
             name,
             including_declaration_name: _,
@@ -13570,7 +13146,7 @@ fn gren_syntax_exposing_uses_of_reference_into(
                         name,
                         open_range: _,
                     } => {
-                        if let GrenSymbolToReference::TypeNotRecordAlias {
+                        if let GrenSymbolToReference::Type {
                             name: symbol_name,
                             module_origin: symbol_module_origin,
                             including_declaration_name: _,
@@ -13583,12 +13159,7 @@ fn gren_syntax_exposing_uses_of_reference_into(
                     }
                     GrenSyntaxExpose::Operator(_) => {}
                     GrenSyntaxExpose::Type(name) => {
-                        if let GrenSymbolToReference::TypeNotRecordAlias {
-                            name: symbol_name,
-                            module_origin: symbol_module_origin,
-                            including_declaration_name: _,
-                        }
-                        | GrenSymbolToReference::RecordTypeAlias {
+                        if let GrenSymbolToReference::Type {
                             name: symbol_name,
                             module_origin: symbol_module_origin,
                             including_declaration_name: _,
@@ -13635,7 +13206,7 @@ fn gren_syntax_declaration_uses_of_reference_into(
         } => {
             if let Some(name_node) = maybe_name
                 && symbol_to_collect_uses_of
-                    == (GrenSymbolToReference::TypeNotRecordAlias {
+                    == (GrenSymbolToReference::Type {
                         module_origin: origin_module,
                         name: &name_node.value,
                         including_declaration_name: true,
@@ -13724,18 +13295,12 @@ fn gren_syntax_declaration_uses_of_reference_into(
             type_: maybe_type,
         } => {
             if let Some(name_node) = maybe_name
-                && ((symbol_to_collect_uses_of
-                    == (GrenSymbolToReference::TypeNotRecordAlias {
+                && symbol_to_collect_uses_of
+                    == (GrenSymbolToReference::Type {
                         name: &name_node.value,
                         module_origin: origin_module,
                         including_declaration_name: true,
-                    }))
-                    || (symbol_to_collect_uses_of
-                        == (GrenSymbolToReference::RecordTypeAlias {
-                            name: &name_node.value,
-                            module_origin: origin_module,
-                            including_declaration_name: true,
-                        })))
+                    })
             {
                 uses_so_far.push(name_node.range);
             }
@@ -13838,12 +13403,7 @@ fn gren_syntax_type_uses_of_reference_into(
                     name: &reference.value.name,
                 },
             );
-            if let GrenSymbolToReference::TypeNotRecordAlias {
-                name: symbol_name,
-                module_origin: symbol_module_origin,
-                including_declaration_name: _,
-            }
-            | GrenSymbolToReference::RecordTypeAlias {
+            if let GrenSymbolToReference::Type {
                 name: symbol_name,
                 module_origin: symbol_module_origin,
                 including_declaration_name: _,
@@ -14283,11 +13843,6 @@ fn gren_syntax_expression_uses_of_reference_into(
                     },
                 );
                 if let GrenSymbolToReference::VariableOrVariant {
-                    module_origin: symbol_module_origin,
-                    name: symbol_name,
-                    including_declaration_name: _,
-                }
-                | GrenSymbolToReference::RecordTypeAlias {
                     module_origin: symbol_module_origin,
                     name: symbol_name,
                     including_declaration_name: _,
