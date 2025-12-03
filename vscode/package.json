@@ -30,7 +30,11 @@
         "extensions": [
           ".gren"
         ],
-        "configuration": "./language-configuration.json"
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "light": "./images/gren-file-icon-light.svg",
+          "dark": "./images/gren-file-icon-dark.svg"
+        }
       }
     ],
     "grammars": [
