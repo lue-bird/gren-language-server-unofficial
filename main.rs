@@ -7223,7 +7223,7 @@ enum GrenSyntaxExpression {
     },
     RecordAccessFunction(Option<GrenSyntaxNode<Box<str>>>),
     RecordUpdate {
-        record_variable: Option<GrenSyntaxNode<Box<str>>>,
+        record: Option<GrenSyntaxNode<Box<GrenSyntaxExpression>>>,
         bar_key_symbol_range: lsp_types::Range,
         fields: Vec<GrenSyntaxExpressionField>,
     },
@@ -9984,32 +9984,49 @@ fn gren_syntax_expression_not_parenthesized_into(
             }
         }
         GrenSyntaxExpression::RecordUpdate {
-            record_variable: maybe_record_variable,
+            record: maybe_record,
             bar_key_symbol_range: _,
             fields,
         } => {
             let line_span: LineSpan = gren_syntax_range_line_span(expression_node.range, comments);
             so_far.push_str("{ ");
             let mut previous_syntax_end: lsp_types::Position = expression_node.range.start;
-            if let Some(record_variable_node) = maybe_record_variable {
-                so_far.push_str(&record_variable_node.value);
-                previous_syntax_end = record_variable_node.range.end;
+            if let Some(record_node) = maybe_record {
+                gren_syntax_comments_then_linebreak_indented_into(
+                    so_far,
+                    indent + 2,
+                    gren_syntax_comments_in_range(
+                        comments,
+                        lsp_types::Range {
+                            start: expression_node.range.start,
+                            end: record_node.range.start,
+                        },
+                    ),
+                );
+                gren_syntax_expression_parenthesized_if_space_separated_into(
+                    so_far,
+                    indent + 2,
+                    comments,
+                    gren_syntax_node_unbox(record_node),
+                );
+                previous_syntax_end = record_node.range.end;
             }
+            space_or_linebreak_indented_into(so_far, line_span, indent);
+            so_far.push_str("| ");
             if let Some((field0, field1_up)) = fields.split_first() {
-                space_or_linebreak_indented_into(so_far, line_span, indent);
-                so_far.push_str("| ");
                 previous_syntax_end = gren_syntax_expression_fields_into_string(
                     so_far, indent, comments, line_span, field0, field1_up,
                 );
             }
             space_or_linebreak_indented_into(so_far, line_span, indent);
-            let comments_before_closing_curly = gren_syntax_comments_in_range(
-                comments,
-                lsp_types::Range {
-                    start: previous_syntax_end,
-                    end: expression_node.range.end,
-                },
-            );
+            let comments_before_closing_curly: &[GrenSyntaxNode<GrenSyntaxComment>] =
+                gren_syntax_comments_in_range(
+                    comments,
+                    lsp_types::Range {
+                        start: previous_syntax_end,
+                        end: expression_node.range.end,
+                    },
+                );
             if !comments_before_closing_curly.is_empty() {
                 linebreak_indented_into(so_far, indent);
                 gren_syntax_comments_then_linebreak_indented_into(
@@ -10775,7 +10792,7 @@ fn gren_syntax_expression_any_sub(
         }
         GrenSyntaxExpression::RecordAccessFunction(_) => false,
         GrenSyntaxExpression::RecordUpdate {
-            record_variable: _,
+            record: _,
             bar_key_symbol_range: _,
             fields,
         } => fields
@@ -12696,21 +12713,19 @@ fn gren_syntax_expression_find_reference_at_position<'a>(
             std::ops::ControlFlow::Continue(local_bindings)
         }
         GrenSyntaxExpression::RecordUpdate {
-            record_variable: maybe_record_variable,
+            record: maybe_record,
             bar_key_symbol_range: _,
             fields,
         } => {
-            if let Some(record_variable_node) = maybe_record_variable
-                && lsp_range_includes_position(record_variable_node.range, position)
+            if let Some(record_node) = maybe_record
+                && lsp_range_includes_position(record_node.range, position)
             {
-                return std::ops::ControlFlow::Break(GrenSyntaxNode {
-                    value: GrenSyntaxSymbol::VariableOrVariantOrOperator {
-                        qualification: "",
-                        name: &record_variable_node.value,
-                        local_bindings: local_bindings,
-                    },
-                    range: record_variable_node.range,
-                });
+                return gren_syntax_expression_find_reference_at_position(
+                    local_bindings,
+                    scope_declaration,
+                    gren_syntax_node_unbox(record_node),
+                    position,
+                );
             }
             fields
                 .iter()
@@ -13687,39 +13702,18 @@ fn gren_syntax_expression_uses_of_reference_into(
         }
         GrenSyntaxExpression::RecordAccessFunction(_) => {}
         GrenSyntaxExpression::RecordUpdate {
-            record_variable: maybe_record_variable,
+            record: maybe_record,
             bar_key_symbol_range: _,
             fields,
         } => {
-            if let Some(record_variable_node) = maybe_record_variable {
-                if let GrenSymbolToReference::LocalBinding {
-                    name: symbol_name,
-                    including_let_declaration_name: _,
-                } = symbol_to_collect_uses_of
-                    && symbol_name == record_variable_node.value.as_ref()
-                {
-                    if local_bindings.iter().any(|local_binding| {
-                        local_binding.name == record_variable_node.value.as_ref()
-                    }) {
-                        uses_so_far.push(record_variable_node.range);
-                    }
-                } else if let GrenSymbolToReference::VariableOrVariant {
-                    module_origin: symbol_module_origin,
-                    name: symbol_name,
-                    including_declaration_name: _,
-                } = symbol_to_collect_uses_of
-                    && symbol_module_origin
-                        == look_up_origin_module(
-                            module_origin_lookup,
-                            GrenQualified {
-                                qualification: "",
-                                name: &record_variable_node.value,
-                            },
-                        )
-                    && symbol_name == record_variable_node.value.as_ref()
-                {
-                    uses_so_far.push(record_variable_node.range);
-                }
+            if let Some(record_node) = maybe_record {
+                gren_syntax_expression_uses_of_reference_into(
+                    uses_so_far,
+                    module_origin_lookup,
+                    local_bindings,
+                    gren_syntax_node_unbox(record_node),
+                    symbol_to_collect_uses_of,
+                );
             }
             for field in fields {
                 if let Some(field_value_node) = &field.value {
@@ -15393,15 +15387,16 @@ fn gren_syntax_highlight_expression_into(
             });
         }
         GrenSyntaxExpression::RecordUpdate {
-            record_variable: maybe_record_variable,
+            record: maybe_record,
             bar_key_symbol_range,
             fields,
         } => {
-            if let Some(record_variable_node) = maybe_record_variable {
-                highlighted_so_far.push(GrenSyntaxNode {
-                    range: record_variable_node.range,
-                    value: GrenSyntaxHighlightKind::Variable,
-                });
+            if let Some(record_node) = maybe_record {
+                gren_syntax_highlight_expression_into(
+                    highlighted_so_far,
+                    local_bindings,
+                    gren_syntax_node_unbox(record_node),
+                );
             }
             highlighted_so_far.push(GrenSyntaxNode {
                 range: *bar_key_symbol_range,
@@ -17265,7 +17260,8 @@ fn parse_gren_syntax_expression_record_or_record_update(
     while parse_symbol(state, ",") {
         parse_gren_whitespace_and_comments(state);
     }
-    let maybe_start_name: Option<GrenSyntaxNode<Box<str>>> = parse_gren_lowercase_as_node(state);
+    let maybe_start_name_or_expression: Option<GrenSyntaxNode<GrenSyntaxExpression>> =
+        parse_gren_syntax_expression_space_separated_node(state);
     parse_gren_whitespace_and_comments(state);
     if let Some(bar_key_symbol_range) = parse_symbol_as_range(state, "|") {
         parse_gren_whitespace_and_comments(state);
@@ -17282,11 +17278,21 @@ fn parse_gren_syntax_expression_record_or_record_update(
         }
         let _: bool = parse_symbol(state, "}");
         Some(GrenSyntaxExpression::RecordUpdate {
-            record_variable: maybe_start_name,
+            record: maybe_start_name_or_expression.map(gren_syntax_node_box),
             bar_key_symbol_range: bar_key_symbol_range,
             fields: fields,
         })
-    } else if let Some(field0_name_node) = maybe_start_name {
+    } else if let Some(GrenSyntaxNode {
+        range: field0_name_range,
+        value:
+            GrenSyntaxExpression::Reference {
+                qualification,
+                name: field0_name,
+            },
+    }) = maybe_start_name_or_expression
+        && qualification.is_empty()
+        && field0_name.starts_with(char::is_lowercase)
+    {
         let maybe_field0_equals_key_symbol_range: Option<lsp_types::Range> =
             parse_symbol_as_range(state, "=");
         parse_gren_whitespace_and_comments(state);
@@ -17297,7 +17303,10 @@ fn parse_gren_syntax_expression_record_or_record_update(
             parse_gren_whitespace_and_comments(state);
         }
         let mut fields: Vec<GrenSyntaxExpressionField> = vec![GrenSyntaxExpressionField {
-            name: field0_name_node,
+            name: GrenSyntaxNode {
+                range: field0_name_range,
+                value: field0_name,
+            },
             equals_key_symbol_range: maybe_field0_equals_key_symbol_range,
             value: maybe_field0_value,
         }];
