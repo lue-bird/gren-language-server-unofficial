@@ -9,9 +9,6 @@ You can also set their paths in the language server settings:
 - `gren-language-server-unofficial.grenPath: string`: compiler executable, default `"gren"`. If the language server can't find it, set this option to the path that `which gren` prints :)
 - `gren-language-server-unofficial.grenFormatPath: "builtin" | string`: formatter executable, default `"builtin"`. `"builtin"` is a fast, unofficial rust formatter
 
-## TODO
-- edit the vscode language grammar (ugh)
-
 ## editor setups
 feel free to contribute, as I only use vscodium
 

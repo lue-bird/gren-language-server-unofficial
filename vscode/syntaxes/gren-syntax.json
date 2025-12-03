@@ -161,11 +161,11 @@
       "name": "keyword.other.gren"
     },
     {
-      "match": "\\b(type|as|port|exposing|alias|infixl|infixr|infix)\\s+",
+      "match": "\\b(type|as|port|exposing|alias|infix)\\s+",
       "name": "keyword.other.gren"
     },
     {
-      "match": "\\b(if|then|else|case|of|let|in)\\s+",
+      "match": "\\b(if|then|else|when|is|let|in)\\s+",
       "name": "keyword.control.gren"
     },
     {
@@ -488,7 +488,7 @@
       }
     },
     "infix_op": {
-      "match": "(</>|<\\?>|<\\||<=|\\|\\||&&|>=|\\|>|\\|=|\\|\\.|\\+\\+|::|/=|==|//|>>|<<|<|>|\\^|\\+|-|/|\\*)",
+      "match": "(<\\||<=|\\|\\||&&|>=|\\|>|\\+\\+|::|!=|==|//|>>|<<|<|>|\\^|\\+|-|/|\\*)",
       "name": "keyword.operator.gren"
     },
     "type-declaration": {
