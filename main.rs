@@ -809,24 +809,30 @@ fn compute_diagnostics(
         _ => "/dev/null",
     };
     let compiler_executable_name: &str = configured_gren_path.unwrap_or("gren");
-    let gren_make_process: std::process::Child = std::process::Command::new(compiler_executable_name)
-        .args(
-            std::iter::once("make")
-                .chain(
-                    project_state
-                        .modules
-                        .keys()
-                        .filter_map(|path| path.to_str()),
-                )
-                .chain(["--report", "json", "--output", sink_path]),
-        )
-        .current_dir(project_path)
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
+    let project_module_names = project_state.modules.values().filter_map(|module_state| {
+        module_state
+            .syntax
+            .header
+            .as_ref()
+            .and_then(|header| header.module_name.as_ref())
+            .map(|name_node| name_node.value.as_ref())
+    });
+    let mut gren_make_command: std::process::Command =
+        std::process::Command::new(compiler_executable_name);
+    gren_make_command.args(
+        std::iter::once("make")
+            .chain(project_module_names)
+            .chain(["--report=json", &format!("--output={sink_path}")]),
+    );
+    gren_make_command.current_dir(project_path);
+    gren_make_command.stdin(std::process::Stdio::null());
+    gren_make_command.stdout(std::process::Stdio::piped());
+    gren_make_command.stderr(std::process::Stdio::piped());
+    let gren_make_process: std::process::Child = gren_make_command
         .spawn().map_err(|error| {
             format!(
-                "I tried to run {compiler_executable_name} make at path {project_path:?} but it failed: {error}. Try installing gren via `npm install -g gren`."
+                "I tried to run {} but it failed: {error}. Try installing gren via `npm install -g gren-lang`.",
+                format!("{gren_make_command:?}").replace('"', "")
             )
         })?;
     let gren_make_output: std::process::Output = gren_make_process
@@ -1252,7 +1258,7 @@ fn initialize_state_for_project_into(
         std::path::Path::join(
             gren_home_path,
             format!(
-                "0.6.2/packages/{}__{}",
+                "0.6.3/packages/{}__{}",
                 package_name.replace('/', "_"),
                 package_version.replace('.', "_")
             ),
@@ -6984,7 +6990,7 @@ fn list_gren_project_directories_in_directory_at_path_into(
     }
     if path
         .file_name()
-        .is_some_and(|file_name| file_name == "gren-stuff")
+        .is_some_and(|file_name| file_name == ".gren")
     {
         // some gren tools put generated code including gren.json there
         return;
