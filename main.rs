@@ -1249,7 +1249,6 @@ fn initialize_state_for_project_into(
             direct_dependencies: _,
         }) => source_directories
             .iter()
-            .copied()
             .map(|relative| std::path::Path::join(&project_path, relative))
             .collect::<Vec<_>>(),
         Some(GrenJson::Package { .. }) => vec![std::path::Path::join(&project_path, "src")],
@@ -1259,11 +1258,12 @@ fn initialize_state_for_project_into(
             .chars()
             .all(|char| char.is_ascii_digit() || char == '.');
         if dependency_is_package_not_local_path {
+            // https://github.com/gren-lang/compiler/blob/e907d5557065651c11fcc25b207b4b71ca9727d0/src/Git.gren#L144
             std::path::Path::join(
                 gren_home_path,
                 format!(
                     "0.6.3/packages/{}__{}",
-                    package_name.replace('/', "_"),
+                    package_name.replace(['.', '/'], "_"),
                     package_version_or_local_path.replace('.', "_")
                 ),
             )
