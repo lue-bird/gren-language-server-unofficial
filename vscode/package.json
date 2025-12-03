@@ -1,7 +1,7 @@
 {
   "name": "gren-language-server-unofficial",
   "displayName": "gren",
-  "description": "language server for gren, in rust",
+  "description": "unofficial language server for gren, in rust",
   "author": "lue_bird",
   "icon": "images/icon.png",
   "license": "MIT",
