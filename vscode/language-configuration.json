@@ -47,11 +47,7 @@
     [
       "'",
       "'"
-    ],
-    [
-      "[glsl|",
-      "|]"
-    ],
+    ]
   ],
   "autoClosingPairs": [
     [
@@ -86,13 +82,6 @@
       "notIn": [
         "string",
         "comment"
-      ]
-    },
-    {
-      "open": "[glsl|",
-      "close": "|]",
-      "notIn": [
-        "string"
       ]
     }
   ]

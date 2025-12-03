@@ -53,9 +53,6 @@
       "name": "constant.numeric.gren"
     },
     {
-      "include": "#glsl"
-    },
-    {
       "include": "#record-prefix"
     },
     {
@@ -717,32 +714,6 @@
         },
         {
           "include": "#type-record"
-        }
-      ]
-    },
-    "glsl": {
-      "begin": "(\\[)(glsl)(\\|)",
-      "beginCaptures": {
-        "1": {
-          "name": "entity.glsl.bracket.gren"
-        },
-        "2": {
-          "name": "entity.glsl.name.gren"
-        },
-        "3": {
-          "name": "entity.glsl.bracket.gren"
-        }
-      },
-      "end": "(\\|\\])",
-      "endCaptures": {
-        "1": {
-          "name": "entity.glsl.bracket.gren"
-        }
-      },
-      "name": "meta.embedded.block.glsl",
-      "patterns": [
-        {
-          "include": "source.glsl"
         }
       ]
     }
