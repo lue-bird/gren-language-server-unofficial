@@ -1110,7 +1110,7 @@ fn initialize_state_for_all_projects_into(
                     .unwrap_or_else(|| {
                         eprintln!(
                             "I could not find an gren home directory (expected to find $HOME/.gren or $GREN_HOME environment variable).
-This directory has cached information about installed packages like gren/core and is therefore required by this language server.
+This directory has cached information about installed packages like gren-lang/core and is therefore required by this language server.
 Running `gren` commands should create that directory.
 This language server from now assumes there exists a local .gren directory.
 If that is where you actually put installed gren packages, make sure to set the $GREN_HOME environment variable
@@ -1225,7 +1225,7 @@ fn initialize_state_for_project_into(
         match project_kind {
             ProjectKind::InWorkspace => {
                 eprintln!(
-                    "I couldn't find a valid gren.json found at path {gren_json_path:?}. Now looking for gren module files across the workspace and gren/core 1.0.5"
+                    "I couldn't find a valid gren.json found at path {gren_json_path:?}. Now looking for gren module files across the workspace and gren-lang/core 7.2.1"
                 );
             }
             ProjectKind::Dependency => {
@@ -1241,7 +1241,6 @@ fn initialize_state_for_project_into(
         Some(GrenJson::Application {
             source_directories,
             direct_dependencies: _,
-            test_direct_dependencies: _,
         }) => source_directories
             .iter()
             .copied()
@@ -1252,27 +1251,23 @@ fn initialize_state_for_project_into(
     let dependency_path = |package_name: &str, package_version: &str| {
         std::path::Path::join(
             gren_home_path,
-            format!("0.19.1/packages/{package_name}/{package_version}"),
+            format!("0.6.2/packages/{package_name}/{package_version}"),
         )
     };
     let direct_dependency_paths: Vec<std::path::PathBuf> = match &maybe_gren_json {
-        None => vec![dependency_path("gren/core", "1.0.5")],
+        None => vec![dependency_path("gren-lang/core", "7.2.1")],
         Some(GrenJson::Application {
             direct_dependencies,
             source_directories: _,
-            test_direct_dependencies,
         }) => direct_dependencies
             .iter()
-            .chain(test_direct_dependencies)
             .map(|(name, version)| dependency_path(name, version))
             .collect::<Vec<_>>(),
         Some(GrenJson::Package {
             dependency_minimum_versions,
             exposed_modules: _,
-            test_dependency_minimum_versions,
         }) => dependency_minimum_versions
             .iter()
-            .chain(test_dependency_minimum_versions)
             .map(|(n, v)| dependency_path(n, v))
             .collect::<Vec<_>>(),
     };
@@ -1286,7 +1281,6 @@ fn initialize_state_for_project_into(
     if let Some(GrenJson::Package {
         exposed_modules,
         dependency_minimum_versions: _,
-        test_dependency_minimum_versions: _,
     }) = &maybe_gren_json
     {
         for &exposed_module_name in exposed_modules {
@@ -1355,12 +1349,10 @@ enum GrenJson<'a> {
     Application {
         source_directories: Vec<&'a str>,
         direct_dependencies: std::collections::HashMap<&'a str, &'a str>,
-        test_direct_dependencies: std::collections::HashMap<&'a str, &'a str>,
     },
     Package {
         dependency_minimum_versions: std::collections::HashMap<&'a str, &'a str>,
         exposed_modules: Vec<&'a str>,
-        test_dependency_minimum_versions: std::collections::HashMap<&'a str, &'a str>,
     },
 }
 
@@ -1396,39 +1388,6 @@ fn parse_gren_json<'a>(json: &'a serde_json::Value) -> Result<GrenJson<'a>, Stri
                     }
                     _ => Err("must have field dependencies.direct".to_string()),
                 }?;
-                let test_direct_dependencies: std::collections::HashMap<&str, &str> =
-                    match json_object
-                        .get("test-dependencies")
-                        .and_then(|dependencies| dependencies.get("direct"))
-                    {
-                        Some(serde_json::Value::Object(direct_dependencies_json)) => {
-                            let mut test_direct_dependencies: std::collections::HashMap<
-                                &str,
-                                &str,
-                            > = std::collections::HashMap::new();
-                            for (
-                                test_direct_dependency_name,
-                                test_direct_dependency_version_json,
-                            ) in direct_dependencies_json
-                            {
-                                let test_direct_dependency_version: &str =
-                                    match test_direct_dependency_version_json {
-                                        serde_json::Value::String(v) => Ok(v.as_str()),
-                                        _ => Err(format!(
-                                            "{test_direct_dependency_name} dependency version must be a string"
-                                        )),
-                                    }?;
-                                test_direct_dependencies.insert(
-                                    test_direct_dependency_name.as_str(),
-                                    test_direct_dependency_version,
-                                );
-                            }
-                            Ok::<std::collections::HashMap<&str, &str>, String>(
-                                test_direct_dependencies,
-                            )
-                        }
-                        _ => Err("must have field dependencies.direct".to_string()),
-                    }?;
                 let mut source_directories: Vec<&str> = Vec::new();
                 match json_object.get("source-directories") {
                     Some(serde_json::Value::Array(source_directories_json)) => {
@@ -1450,7 +1409,6 @@ fn parse_gren_json<'a>(json: &'a serde_json::Value) -> Result<GrenJson<'a>, Stri
                 Ok(GrenJson::Application {
                     source_directories: source_directories,
                     direct_dependencies: direct_dependencies,
-                    test_direct_dependencies: test_direct_dependencies,
                 })
             }
             "package" => {
@@ -1481,38 +1439,6 @@ fn parse_gren_json<'a>(json: &'a serde_json::Value) -> Result<GrenJson<'a>, Stri
                                 );
                             }
                             Ok(dependency_minimum_versions)
-                        }
-                        _ => Err("must have field dependencies".to_string()),
-                    }?;
-                let test_dependency_minimum_versions: std::collections::HashMap<&str, &str> =
-                    match json_object.get("test-dependencies") {
-                        Some(serde_json::Value::Object(dependencies)) => {
-                            let mut test_dependency_minimum_versions: std::collections::HashMap<
-                                &str,
-                                &str,
-                            > = std::collections::HashMap::new();
-                            for (
-                                test_direct_dependency_name,
-                                test_direct_dependency_version_json,
-                            ) in dependencies
-                            {
-                                let test_dependency_version_minimum: &str =
-                                    match test_direct_dependency_version_json {
-                                        serde_json::Value::String(
-                                            dependency_version_constraint,
-                                        ) => gren_json_version_constraint_to_minimum_version(
-                                            dependency_version_constraint,
-                                        ),
-                                        _ => Err(format!(
-                                            "{test_direct_dependency_name} dependency version must be a string"
-                                        )),
-                                    }?;
-                                test_dependency_minimum_versions.insert(
-                                    test_direct_dependency_name.as_str(),
-                                    test_dependency_version_minimum,
-                                );
-                            }
-                            Ok(test_dependency_minimum_versions)
                         }
                         _ => Err("must have field dependencies".to_string()),
                     }?;
@@ -1557,7 +1483,6 @@ fn parse_gren_json<'a>(json: &'a serde_json::Value) -> Result<GrenJson<'a>, Stri
                 Ok(GrenJson::Package {
                     dependency_minimum_versions,
                     exposed_modules: exposed_modules,
-                    test_dependency_minimum_versions: test_dependency_minimum_versions,
                 })
             }
             _ => Err("field type must be package or application".to_string()),
@@ -7617,7 +7542,7 @@ struct GrenQualified<'a> {
 }
 
 fn module_origin_lookup_for_implicit_imports() -> ModuleOriginLookup<'static> {
-    // https://github.com/gren/core?tab=readme-ov-file#default-imports
+    // https://github.com/gren-lang/core?tab=readme-ov-file#default-imports
     ModuleOriginLookup {
         unqualified: std::collections::HashMap::from([
             ("Int", "Basics"),
