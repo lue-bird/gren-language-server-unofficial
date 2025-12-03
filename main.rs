@@ -1109,7 +1109,7 @@ fn initialize_state_for_all_projects_into(
                 &std::env::home_dir()
                     .unwrap_or_else(|| {
                         eprintln!(
-                            "I could not find an gren home directory (expected to find $HOME/.gren or $GREN_HOME environment variable).
+                            "I could not find an gren home directory (expected to find $HOME/.cache/gren or $GREN_HOME environment variable).
 This directory has cached information about installed packages like gren-lang/core and is therefore required by this language server.
 Running `gren` commands should create that directory.
 This language server from now assumes there exists a local .gren directory.
@@ -1118,7 +1118,7 @@ accordingly so that tools like the gren compiler and language server can find th
                         );
                         std::env::current_dir().ok().unwrap_or_else(|| std::path::PathBuf::new())
                     }),
-                ".gren",
+                ".cache/gren",
             )
         }
     };
@@ -1251,7 +1251,11 @@ fn initialize_state_for_project_into(
     let dependency_path = |package_name: &str, package_version: &str| {
         std::path::Path::join(
             gren_home_path,
-            format!("0.6.2/packages/{package_name}/{package_version}"),
+            format!(
+                "0.6.2/packages/{}__{}",
+                package_name.replace('/', "_"),
+                package_version.replace('.', "_")
+            ),
         )
     };
     let direct_dependency_paths: Vec<std::path::PathBuf> = match &maybe_gren_json {
