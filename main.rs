@@ -8453,7 +8453,7 @@ fn gren_syntax_type_not_parenthesized_into<'a>(
                         },
                     ),
                 );
-                let previous_syntax_end: lsp_types::Position = gren_syntax_type_fields_into_string(
+                let previous_syntax_end: lsp_types::Position = gren_syntax_type_fields_into(
                     so_far,
                     indent,
                     assign_qualification,
@@ -8496,7 +8496,7 @@ fn gren_syntax_type_not_parenthesized_into<'a>(
             if let Some((field0, field1_up)) = fields.split_first() {
                 space_or_linebreak_indented_into(so_far, line_span, indent);
                 so_far.push_str("| ");
-                previous_syntax_end = gren_syntax_type_fields_into_string(
+                previous_syntax_end = gren_syntax_type_fields_into(
                     so_far,
                     indent,
                     assign_qualification,
@@ -8637,7 +8637,7 @@ fn gren_syntax_type_parenthesized_if_space_separated_into<'a>(
     }
 }
 /// returns the last syntax end position
-fn gren_syntax_type_fields_into_string<'a>(
+fn gren_syntax_type_fields_into<'a>(
     so_far: &mut String,
     indent: usize,
     assign_qualification: impl Fn(GrenQualified<'a>) -> &'a str + Copy,
@@ -9939,10 +9939,9 @@ fn gren_syntax_expression_not_parenthesized_into(
                         },
                     ),
                 );
-                let previous_syntax_end: lsp_types::Position =
-                    gren_syntax_expression_fields_into_string(
-                        so_far, indent, comments, line_span, field0, field1_up,
-                    );
+                let previous_syntax_end: lsp_types::Position = gren_syntax_expression_fields_into(
+                    so_far, indent, comments, line_span, field0, field1_up,
+                );
                 space_or_linebreak_indented_into(so_far, line_span, indent);
                 let comments_before_closing_curly = gren_syntax_comments_in_range(
                     comments,
@@ -10014,7 +10013,7 @@ fn gren_syntax_expression_not_parenthesized_into(
             space_or_linebreak_indented_into(so_far, line_span, indent);
             so_far.push_str("| ");
             if let Some((field0, field1_up)) = fields.split_first() {
-                previous_syntax_end = gren_syntax_expression_fields_into_string(
+                previous_syntax_end = gren_syntax_expression_fields_into(
                     so_far, indent, comments, line_span, field0, field1_up,
                 );
             }
@@ -10107,7 +10106,7 @@ fn gren_syntax_case_into(
     }
 }
 /// returns the last syntax end position
-fn gren_syntax_expression_fields_into_string<'a>(
+fn gren_syntax_expression_fields_into<'a>(
     so_far: &mut String,
     indent: usize,
     comments: &[GrenSyntaxNode<GrenSyntaxComment>],
@@ -18186,14 +18185,16 @@ fn parse_gren_syntax_module(module_source: &str) -> GrenSyntaxModule {
                 last_valid_end_offet_utf8 = state.offset_utf8;
             }
             None => {
+                last_parsed_was_valid = false;
                 parse_before_next_linebreak(&mut state);
-                if parse_linebreak(&mut state) {
-                    last_parsed_was_valid = false;
-                } else {
+                if !parse_linebreak(&mut state) {
                     break 'parsing_delarations;
                 }
             }
         }
+    }
+    if !last_parsed_was_valid {
+        declarations.push(Err(Box::from(&module_source[last_valid_end_offet_utf8..])));
     }
     GrenSyntaxModule {
         header: maybe_header,
