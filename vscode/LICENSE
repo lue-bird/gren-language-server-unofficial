@@ -1,4 +1,4 @@
-`syntaxes/` includes files from https://github.com/gren-tooling/gren-language-client-vscode.
+`syntaxes/` includes files from https://github.com/elm-tooling/elm-language-client-vscode.
 As a consequence, this repository is licensed under their license:
 
 MIT License
