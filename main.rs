@@ -6,6 +6,7 @@ struct State {
         /* path to directory containing gren.json */ std::path::PathBuf,
         ProjectState,
     >,
+    gren_version: &'static str,
     open_gren_text_document_uris: std::collections::HashSet<lsp_types::Url>,
     configured_gren_path: Option<Box<str>>,
     configured_gren_formatter: Option<ConfiguredGrenFormatter>,
@@ -65,7 +66,8 @@ fn initialize(
     initialize_arguments: &lsp_types::InitializeParams,
 ) -> Result<State, Box<dyn std::error::Error>> {
     let mut state: State = State {
-        projects: initialize_projects_state_for_workspace_directories_into(initialize_arguments),
+        projects: std::collections::HashMap::new(),
+        gren_version: "0.6.3",
         open_gren_text_document_uris: std::collections::HashSet::new(),
         configured_gren_path: None,
         configured_gren_formatter: None,
@@ -77,8 +79,13 @@ fn initialize(
             .sender
             .send(lsp_server::Message::Request(configuration_request()?))?;
     }
+    state.projects = initialize_projects_state_for_workspace_directories_into(
+        state.gren_version,
+        initialize_arguments,
+    );
     // only initializing diagnostics once the `grenPath` configuration is received would be better
     publish_and_initialize_state_for_diagnostics_for_projects_in_workspace(connection, &mut state);
+
     connection.sender.send(lsp_server::Message::Notification(
         lsp_server::Notification {
             method: <lsp_types::request::RegisterCapability as lsp_types::request::Request>::METHOD
@@ -395,12 +402,14 @@ fn update_state_on_did_change_watched_files(
     }
     if !edited_gren_json_project_paths.is_empty() {
         update_projects_state_on_gren_json_changes(
+            state.gren_version,
             &mut state.projects,
             edited_gren_json_project_paths.into_iter(),
         );
     }
 }
 fn update_projects_state_on_gren_json_changes(
+    gren_version: &str,
     projects_state: &mut std::collections::HashMap<std::path::PathBuf, ProjectState>,
     edited_gren_json_project_paths: impl Iterator<Item = std::path::PathBuf>,
 ) {
@@ -409,6 +418,7 @@ fn update_projects_state_on_gren_json_changes(
     let mut uninitialized_projects: std::collections::HashMap<std::path::PathBuf, ProjectState> =
         std::collections::HashMap::new();
     initialize_state_for_all_projects_into(
+        gren_version,
         &mut uninitialized_projects,
         edited_gren_json_project_paths,
     );
@@ -1025,16 +1035,11 @@ fn parse_gren_make_message_segment<'a>(
     }
 }
 fn update_state_with_configuration(state: &mut State, config_json: &serde_json::Value) {
-    state.configured_gren_path = config_json
+    let new_gren_path: Option<&str> = config_json
         .get("grenPath")
         .and_then(|path_json| path_json.as_str())
-        .and_then(|path| {
-            if path.is_empty() {
-                None
-            } else {
-                Some(Box::from(path))
-            }
-        });
+        .and_then(|path| if path.is_empty() { None } else { Some(path) });
+    state.configured_gren_path = new_gren_path.map(Box::from);
     state.configured_gren_formatter = config_json
         .get("grenFormatPath")
         .and_then(|path_json| path_json.as_str())
@@ -1051,8 +1056,44 @@ fn update_state_with_configuration(state: &mut State, config_json: &serde_json::
                 })
             }
         });
+    if let Some(compiler_executable) = new_gren_path {
+        let mut gren_version_command: std::process::Command =
+            std::process::Command::new(compiler_executable);
+        gren_version_command.arg("--version");
+        match gren_version_command.spawn() {
+            Err(error) => {
+                eprintln!(
+                    "I tried to run {} but it failed: {error}. Try installing gren via `npm install -g gren-lang`.",
+                    format!("{gren_version_command:?}").replace('"', "")
+                );
+            }
+            Ok(gren_version_process) => match gren_version_process.wait_with_output() {
+                Err(error) => {
+                    println!(
+                        "I wasn't able to read the output of {}: {error}",
+                        format!("{gren_version_command:?}").replace('"', "")
+                    );
+                }
+                Ok(gren_make_output) => match str::from_utf8(&gren_make_output.stdout) {
+                    Err(error) => {
+                        println!(
+                            "I wasn't able to decode the output of {} as a string: {error}",
+                            format!("{gren_version_command:?}").replace('"', "")
+                        );
+                    }
+                    Ok(gren_version) => {
+                        // since the version string is tiny
+                        // and it is leaked only once usually
+                        // this is perfectly fine
+                        state.gren_version = Box::leak(Box::from(gren_version));
+                    }
+                },
+            },
+        }
+    }
 }
 fn initialize_projects_state_for_workspace_directories_into(
+    gren_version: &str,
     initialize_arguments: &lsp_types::InitializeParams,
 ) -> std::collections::HashMap<std::path::PathBuf, ProjectState> {
     let mut projects_state: std::collections::HashMap<std::path::PathBuf, ProjectState> =
@@ -1063,6 +1104,7 @@ fn initialize_projects_state_for_workspace_directories_into(
         .flatten()
         .filter_map(|workspace_folder| workspace_folder.uri.to_file_path().ok());
     initialize_state_for_all_projects_into(
+        gren_version,
         &mut projects_state,
         list_gren_project_directories_in_directory_at_path(workspace_directory_paths).into_iter(),
     );
@@ -1105,6 +1147,7 @@ fn initialize_project_modules(
 }
 
 fn initialize_state_for_all_projects_into(
+    gren_version: &str,
     projects_state: &mut std::collections::HashMap<std::path::PathBuf, ProjectState>,
     project_paths: impl Iterator<Item = std::path::PathBuf>,
 ) {
@@ -1139,6 +1182,7 @@ accordingly so that tools like the gren compiler and language server can find th
             projects_state,
             &mut all_dependency_exposed_module_names,
             &mut skipped_dependencies,
+            gren_version,
             &gren_home_path,
             ProjectKind::InWorkspace,
             project_path,
@@ -1170,6 +1214,7 @@ fn initialize_state_for_projects_into(
         std::collections::HashMap<Box<str>, ProjectModuleOrigin>,
     >,
     skipped_dependencies: &mut std::collections::HashSet<std::path::PathBuf>,
+    gren_version: &str,
     gren_home_path: &std::path::PathBuf,
     project_kind: ProjectKind,
     project_paths: impl Iterator<Item = std::path::PathBuf>,
@@ -1183,6 +1228,7 @@ fn initialize_state_for_projects_into(
             projects_state,
             all_dependency_exposed_module_names,
             skipped_dependencies,
+            gren_version,
             gren_home_path,
             project_kind,
             project_path,
@@ -1197,6 +1243,7 @@ fn initialize_state_for_project_into(
         std::collections::HashMap<Box<str>, ProjectModuleOrigin>,
     >,
     skipped_dependencies: &mut std::collections::HashSet<std::path::PathBuf>,
+    gren_version: &str,
     gren_home_path: &std::path::PathBuf,
     project_kind: ProjectKind,
     project_path: std::path::PathBuf,
@@ -1260,7 +1307,7 @@ fn initialize_state_for_project_into(
                 std::path::Path::join(
                     gren_home_path,
                     format!(
-                        "0.6.3/packages/{}__{}",
+                        "{gren_version}/packages/{}__{}",
                         package_name.replace(['.', '/'], "_"),
                         package_version_or_local_path.replace('.', "_")
                     ),
@@ -1327,6 +1374,7 @@ fn initialize_state_for_project_into(
         projects_state,
         all_dependency_exposed_module_names,
         skipped_dependencies,
+        gren_version,
         gren_home_path,
         ProjectKind::Dependency,
         direct_dependency_paths.into_iter(),
