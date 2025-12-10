@@ -2,14 +2,21 @@
 #![allow(non_upper_case_globals)]
 
 struct State {
+    configured: ConfiguredState,
+    gren_version: &'static str,
+    configured_gren_path: Option<Box<str>>,
+    configured_gren_formatter: Option<ConfiguredGrenFormatter>,
     projects: std::collections::HashMap<
         /* path to directory containing gren.json */ std::path::PathBuf,
         ProjectState,
     >,
-    gren_version: &'static str,
     open_gren_text_document_uris: std::collections::HashSet<lsp_types::Url>,
-    configured_gren_path: Option<Box<str>>,
-    configured_gren_formatter: Option<ConfiguredGrenFormatter>,
+}
+enum ConfiguredState {
+    WaitingForInitial {
+        workspace_folders: Vec<lsp_types::WorkspaceFolder>,
+    },
+    Received,
 }
 enum ConfiguredGrenFormatter {
     Builtin,
@@ -54,7 +61,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     )?;
     let initialize_arguments: lsp_types::InitializeParams =
         serde_json::from_value(initialize_arguments_json)?;
-    let state: State = initialize(&connection, &initialize_arguments)?;
+    let state: State = initialize(&connection, initialize_arguments)?;
     server_loop(&connection, state)?;
     // shut down gracefully
     drop(connection);
@@ -63,29 +70,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 fn initialize(
     connection: &lsp_server::Connection,
-    initialize_arguments: &lsp_types::InitializeParams,
+    initialize_arguments: lsp_types::InitializeParams,
 ) -> Result<State, Box<dyn std::error::Error>> {
     let mut state: State = State {
         projects: std::collections::HashMap::new(),
         gren_version: "0.6.3",
+        configured: ConfiguredState::WaitingForInitial {
+            workspace_folders: initialize_arguments
+                .workspace_folders
+                .unwrap_or_else(Vec::new),
+        },
         open_gren_text_document_uris: std::collections::HashSet::new(),
         configured_gren_path: None,
         configured_gren_formatter: None,
     };
     if let Some(config_json) = &initialize_arguments.initialization_options {
-        update_state_with_configuration(&mut state, config_json);
+        update_state_with_configuration(&mut state, connection, config_json);
     } else {
         connection
             .sender
             .send(lsp_server::Message::Request(configuration_request()?))?;
     }
-    state.projects = initialize_projects_state_for_workspace_directories_into(
-        state.gren_version,
-        initialize_arguments,
-    );
-    // only initializing diagnostics once the `grenPath` configuration is received would be better
-    publish_and_initialize_state_for_diagnostics_for_projects_in_workspace(connection, &mut state);
-
     connection.sender.send(lsp_server::Message::Notification(
         lsp_server::Notification {
             method: <lsp_types::request::RegisterCapability as lsp_types::request::Request>::METHOD
@@ -224,7 +229,9 @@ fn server_loop(
                 }
             }
             lsp_server::Message::Response(response) => {
-                if let Err(err) = handle_response(&mut state, &response.id, response.result) {
+                if let Err(err) =
+                    handle_response(connection, &mut state, &response.id, response.result)
+                {
                     eprintln!("failed to handle response {}: {err}", response.id);
                 }
             }
@@ -485,6 +492,7 @@ enum ServerRequestId {
     WorkspaceConfiguration,
 }
 fn handle_response(
+    connection: &lsp_server::Connection,
     state: &mut State,
     response_id: &lsp_server::RequestId,
     maybe_response_result: Option<serde_json::Value>,
@@ -495,7 +503,7 @@ fn handle_response(
         let response_parsed: <lsp_types::request::WorkspaceConfiguration as lsp_types::request::Request>::Result =
             serde_json::from_value(response_result)?;
         if let Some(config_json) = response_parsed.first() {
-            update_state_with_configuration(state, config_json);
+            update_state_with_configuration(state, connection, config_json);
         }
     }
     Ok(())
@@ -1034,7 +1042,11 @@ fn parse_gren_make_message_segment<'a>(
         )),
     }
 }
-fn update_state_with_configuration(state: &mut State, config_json: &serde_json::Value) {
+fn update_state_with_configuration(
+    state: &mut State,
+    connection: &lsp_server::Connection,
+    config_json: &serde_json::Value,
+) {
     let new_gren_path: Option<&str> = config_json
         .get("grenPath")
         .and_then(|path_json| path_json.as_str())
@@ -1091,26 +1103,37 @@ fn update_state_with_configuration(state: &mut State, config_json: &serde_json::
             },
         }
     }
+    match &state.configured {
+        ConfiguredState::Received => {}
+        ConfiguredState::WaitingForInitial { workspace_folders } => {
+            initialize_projects_state_for_workspace_directories_into(
+                &mut state.projects,
+                state.gren_version,
+                workspace_folders,
+            );
+            publish_and_initialize_state_for_diagnostics_for_projects_in_workspace(
+                connection, state,
+            );
+            state.configured = ConfiguredState::Received;
+        }
+    }
 }
 fn initialize_projects_state_for_workspace_directories_into(
+    projects_state: &mut std::collections::HashMap<std::path::PathBuf, ProjectState>,
     gren_version: &str,
-    initialize_arguments: &lsp_types::InitializeParams,
-) -> std::collections::HashMap<std::path::PathBuf, ProjectState> {
-    let mut projects_state: std::collections::HashMap<std::path::PathBuf, ProjectState> =
-        std::collections::HashMap::new();
-    let workspace_directory_paths = initialize_arguments
-        .workspace_folders
+    workspace_folders: &[lsp_types::WorkspaceFolder],
+) {
+    let workspace_directory_paths = workspace_folders
         .iter()
-        .flatten()
         .filter_map(|workspace_folder| workspace_folder.uri.to_file_path().ok());
     initialize_state_for_all_projects_into(
         gren_version,
-        &mut projects_state,
+        projects_state,
         list_gren_project_directories_in_directory_at_path(workspace_directory_paths).into_iter(),
     );
     let (fully_parsed_project_sender, fully_parsed_project_receiver) = std::sync::mpsc::channel();
     std::thread::scope(|thread_scope| {
-        for (uninitialized_project_path, uninitialized_project_state) in &projects_state {
+        for (uninitialized_project_path, uninitialized_project_state) in projects_state.iter() {
             let projects_that_finished_full_parse_sender = fully_parsed_project_sender.clone();
             thread_scope.spawn(move || {
                 projects_that_finished_full_parse_sender.send((
@@ -1128,7 +1151,6 @@ fn initialize_projects_state_for_workspace_directories_into(
             project_state_to_update.modules = fully_parsed_project_modules;
         }
     }
-    projects_state
 }
 fn initialize_project_modules(
     uninitialized_module_paths: impl Iterator<Item = std::path::PathBuf>,
