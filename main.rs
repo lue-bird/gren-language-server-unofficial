@@ -8368,84 +8368,17 @@ fn gren_syntax_type_not_parenthesized_into<'a>(
             input,
             arrow_key_symbol_range: _,
             output: maybe_output,
-        } => {
-            let input_unparenthesized: Option<GrenSyntaxNode<&GrenSyntaxType>> =
-                gren_syntax_type_to_unparenthesized(gren_syntax_node_unbox(input));
-            match input_unparenthesized {
-                Some(GrenSyntaxNode {
-                    value: GrenSyntaxType::Function { .. },
-                    range: _,
-                }) => {
-                    gren_syntax_type_parenthesized_into(
-                        so_far,
-                        indent,
-                        assign_qualification,
-                        comments,
-                        input.range,
-                        input_unparenthesized,
-                    );
-                }
-                _ => {
-                    gren_syntax_type_not_parenthesized_into(
-                        so_far,
-                        indent,
-                        assign_qualification,
-                        comments,
-                        gren_syntax_node_unbox(input),
-                    );
-                }
-            }
-            space_or_linebreak_indented_into(
-                so_far,
-                gren_syntax_range_line_span(type_node.range, comments),
-                indent,
-            );
-            let comments_around_arrow: &[GrenSyntaxNode<GrenSyntaxComment>] =
-                gren_syntax_comments_in_range(
-                    comments,
-                    lsp_types::Range {
-                        start: input.range.end,
-                        end: maybe_output
-                            .as_ref()
-                            .map(|node| node.range.start)
-                            .unwrap_or(type_node.range.end),
-                    },
-                );
-            if let Some(output_node) = maybe_output {
-                so_far.push_str("->");
-                space_or_linebreak_indented_into(
-                    so_far,
-                    if comments_around_arrow.is_empty() {
-                        gren_syntax_range_line_span(output_node.range, comments)
-                    } else {
-                        LineSpan::Multiple
-                    },
-                    next_indent(indent),
-                );
-                gren_syntax_comments_then_linebreak_indented_into(
-                    so_far,
-                    next_indent(indent),
-                    comments_around_arrow,
-                );
-                gren_syntax_type_not_parenthesized_into(
-                    so_far,
-                    next_indent(indent),
-                    assign_qualification,
-                    comments,
-                    gren_syntax_node_unbox(output_node),
-                );
-            } else {
-                if !comments_around_arrow.is_empty() {
-                    linebreak_indented_into(so_far, indent);
-                    gren_syntax_comments_then_linebreak_indented_into(
-                        so_far,
-                        indent,
-                        comments_around_arrow,
-                    );
-                }
-                so_far.push_str("-> ");
-            }
-        }
+        } => gren_syntax_type_function_into(
+            so_far,
+            comments,
+            assign_qualification,
+            gren_syntax_range_line_span(type_node.range, comments),
+            type_node.range,
+            indent,
+            gren_syntax_node_unbox(input),
+            indent,
+            maybe_output.as_ref().map(gren_syntax_node_unbox),
+        ),
         GrenSyntaxType::Parenthesized(maybe_in_parens) => {
             if let Some(in_parens) = maybe_in_parens
                 && let Some(innermost) =
@@ -8706,6 +8639,114 @@ fn gren_syntax_type_parenthesized_if_space_separated_into<'a>(
         }
     }
 }
+
+fn gren_syntax_type_function_into<'a>(
+    so_far: &mut String,
+    comments: &[GrenSyntaxNode<GrenSyntaxComment>],
+    assign_qualification: impl Fn(GrenQualified<'a>) -> &'a str + Copy,
+    line_span: LineSpan,
+    full_range: lsp_types::Range,
+    indent_for_input: usize,
+    input: GrenSyntaxNode<&'a GrenSyntaxType>,
+    indent_after_input: usize,
+    maybe_output: Option<GrenSyntaxNode<&'a GrenSyntaxType>>,
+) {
+    let input_unparenthesized: Option<GrenSyntaxNode<&GrenSyntaxType>> =
+        gren_syntax_type_to_unparenthesized(input);
+    match input_unparenthesized.map(|node| node.value) {
+        Some(GrenSyntaxType::Function { .. }) => {
+            gren_syntax_type_parenthesized_into(
+                so_far,
+                indent_for_input,
+                assign_qualification,
+                comments,
+                input.range,
+                input_unparenthesized,
+            );
+        }
+        _ => {
+            gren_syntax_type_not_parenthesized_into(
+                so_far,
+                indent_for_input,
+                assign_qualification,
+                comments,
+                input,
+            );
+        }
+    }
+    space_or_linebreak_indented_into(so_far, line_span, indent_after_input);
+    let comments_around_arrow: &[GrenSyntaxNode<GrenSyntaxComment>] = gren_syntax_comments_in_range(
+        comments,
+        lsp_types::Range {
+            start: input.range.end,
+            end: maybe_output
+                .as_ref()
+                .map(|node| node.range.start)
+                .unwrap_or(full_range.end),
+        },
+    );
+    match maybe_output {
+        None => {
+            if !comments_around_arrow.is_empty() {
+                linebreak_indented_into(so_far, indent_after_input);
+                gren_syntax_comments_then_linebreak_indented_into(
+                    so_far,
+                    indent_after_input,
+                    comments_around_arrow,
+                );
+            }
+            so_far.push_str("-> ");
+        }
+        Some(output_node) => {
+            so_far.push_str("->");
+            space_or_linebreak_indented_into(
+                so_far,
+                if comments_around_arrow.is_empty() {
+                    gren_syntax_range_line_span(output_node.range, comments)
+                } else {
+                    LineSpan::Multiple
+                },
+                next_indent(indent_after_input),
+            );
+            gren_syntax_comments_then_linebreak_indented_into(
+                so_far,
+                next_indent(indent_after_input),
+                comments_around_arrow,
+            );
+            match gren_syntax_type_to_unparenthesized(output_node) {
+                Some(GrenSyntaxNode {
+                    range: output_node_unparenthesized_range,
+                    value:
+                        GrenSyntaxType::Function {
+                            input: output_input,
+                            arrow_key_symbol_range: _,
+                            output: output_maybe_output,
+                        },
+                }) => gren_syntax_type_function_into(
+                    so_far,
+                    comments,
+                    assign_qualification,
+                    line_span,
+                    output_node_unparenthesized_range,
+                    next_indent(indent_after_input),
+                    gren_syntax_node_unbox(output_input),
+                    indent_after_input,
+                    output_maybe_output.as_ref().map(gren_syntax_node_unbox),
+                ),
+                _ => {
+                    gren_syntax_type_not_parenthesized_into(
+                        so_far,
+                        next_indent(indent_after_input),
+                        assign_qualification,
+                        comments,
+                        output_node,
+                    );
+                }
+            }
+        }
+    }
+}
+
 /// returns the last syntax end position
 fn gren_syntax_type_fields_into<'a>(
     so_far: &mut String,
