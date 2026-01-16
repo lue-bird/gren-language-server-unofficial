@@ -1,5 +1,4 @@
 target
-Cargo.lock
 package-lock.json
 gren-stuff
 node_modules
