@@ -70,7 +70,7 @@ auto-format = true
 - your idea 👀
 
 ## known limitations
-- It is possible that an gren module belongs to multiple projects when source directory paths overlap between projects. This throws a wrench in pretty much all existing code (likely internal document source desync and a more limited lsp feature range in one of the containing projects).
+- It is possible that a gren module belongs to multiple projects when source directory paths overlap between projects. This throws a wrench in pretty much all existing code (likely internal document source desync and a more limited lsp feature range in one of the containing projects).
   This situation is, I assume, fixable by special-casing their storage and handling but it would require a _lot_ of work
 
 ## setup for developing

@@ -1180,7 +1180,7 @@ fn initialize_state_for_all_projects_into(
                 &std::env::home_dir()
                     .unwrap_or_else(|| {
                         eprintln!(
-                            "I could not find an gren home directory (expected to find $HOME/.cache/gren or $GREN_HOME environment variable).
+                            "I could not find a gren home directory (expected to find $HOME/.cache/gren or $GREN_HOME environment variable).
 This directory has cached information about installed packages like gren-lang/core and is therefore required by this language server.
 Running `gren` commands should create that directory.
 This language server from now assumes there exists a local .gren directory.
@@ -15893,7 +15893,7 @@ fn parse_unsigned_integer_base10(state: &mut ParseState) -> bool {
     }
 }
 
-/// a valid gren symbol that must be followed by a character that could not be part of an gren identifier
+/// a valid gren symbol that must be followed by a character that could not be part of a gren identifier
 fn parse_gren_keyword_as_range(state: &mut ParseState, symbol: &str) -> Option<lsp_types::Range> {
     if state.source[state.offset_utf8..].starts_with(symbol)
         && !(state.source[(state.offset_utf8 + symbol.len())..]
