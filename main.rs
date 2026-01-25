@@ -18284,7 +18284,7 @@ fn parse_gren_syntax_module(module_source: &str) -> GrenSyntaxModule {
     let mut last_parsed_was_valid: bool = true;
     let mut declarations: Vec<Result<GrenSyntaxDocumentedDeclaration, Box<str>>> =
         Vec::with_capacity(8);
-    'parsing_delarations: loop {
+    'parsing_declarations: loop {
         let offset_utf8_before_parsing_documeted_declaration: usize = state.offset_utf8;
         match parse_gren_syntax_documented_declaration_followed_by_whitespace_and_comments_and_whatever_indented(&mut state) {
             Some(documented_declaration) => {
@@ -18297,10 +18297,13 @@ fn parse_gren_syntax_module(module_source: &str) -> GrenSyntaxModule {
                 last_valid_end_offet_utf8 = state.offset_utf8;
             }
             None => {
+                if state.offset_utf8 >= state.source.len() {
+                    break 'parsing_declarations;
+                }
                 last_parsed_was_valid = false;
                 parse_before_next_linebreak(&mut state);
                 if !parse_linebreak(&mut state) {
-                    break 'parsing_delarations;
+                    break 'parsing_declarations;
                 }
             }
         }
