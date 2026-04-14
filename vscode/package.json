@@ -32,8 +32,8 @@
         ],
         "configuration": "./language-configuration.json",
         "icon": {
-          "light": "./images/gren-file-icon-light.svg",
-          "dark": "./images/gren-file-icon-dark.svg"
+          "light": "./images/gren-file-icon-light.png",
+          "dark": "./images/gren-file-icon-dark.png"
         }
       }
     ],
