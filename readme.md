@@ -76,9 +76,8 @@ auto-format = true
 ## setup for developing
 Rebuild the project with
 ```bash
-cargo build
+cargo install --debug --offline --path . gren-language-server-unofficial
 ```
-Then point your editor to the created `???/target/debug/gren-language-server-unofficial`.
 
 ### log of failed optimizations
 - switching to mimalloc, ~>25% faster (really nice) at the cost of 25% more memory consumption.
