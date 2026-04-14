@@ -932,7 +932,7 @@ fn parse_gren_make_report(
                 .collect::<Result<Vec<_>, String>>(),
             _ => Err("field errors must be array".to_string()),
         },
-        Some(unknown_type) => Err(format!("unknown report type {unknown_type}")),
+        Some(unknown_type) => Err(format!("unknown report type \"{unknown_type}\"")),
         None => Err("report type must exist as a string".to_string()),
     }
 }
@@ -1071,6 +1071,9 @@ fn update_state_with_configuration(
     if let Some(compiler_executable) = new_gren_path {
         let mut gren_version_command: std::process::Command =
             std::process::Command::new(compiler_executable);
+        gren_version_command.stdin(std::process::Stdio::null());
+        gren_version_command.stdout(std::process::Stdio::piped());
+        gren_version_command.stderr(std::process::Stdio::piped());
         gren_version_command.arg("--version");
         match gren_version_command.spawn() {
             Err(error) => {
@@ -1081,14 +1084,14 @@ fn update_state_with_configuration(
             }
             Ok(gren_version_process) => match gren_version_process.wait_with_output() {
                 Err(error) => {
-                    println!(
+                    eprintln!(
                         "I wasn't able to read the output of {}: {error}",
                         format!("{gren_version_command:?}").replace('"', "")
                     );
                 }
                 Ok(gren_make_output) => match str::from_utf8(&gren_make_output.stdout) {
                     Err(error) => {
-                        println!(
+                        eprintln!(
                             "I wasn't able to decode the output of {} as a string: {error}",
                             format!("{gren_version_command:?}").replace('"', "")
                         );
@@ -1097,7 +1100,7 @@ fn update_state_with_configuration(
                         // since the version string is tiny
                         // and it is leaked only once usually
                         // this is perfectly fine
-                        state.gren_version = Box::leak(Box::from(gren_version));
+                        state.gren_version = Box::leak(Box::from(gren_version.trim()));
                     }
                 },
             },
@@ -1342,7 +1345,7 @@ fn initialize_state_for_project_into(
         }
     };
     let direct_dependency_paths: Vec<std::path::PathBuf> = match &maybe_gren_json {
-        None => vec![dependency_path("gren-lang/core", "7.2.1")],
+        None => vec![dependency_path("gren-lang/core", "7.4.0")],
         Some(GrenJson::Application {
             direct_dependencies,
             source_directories: _,
