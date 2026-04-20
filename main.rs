@@ -7170,6 +7170,7 @@ enum GrenSyntaxPattern {
         reference: GrenSyntaxNode<GrenQualifiedName>,
         value: Option<GrenSyntaxNode<Box<GrenSyntaxPattern>>>,
     },
+    ArrayExact(Vec<GrenSyntaxNode<GrenSyntaxPattern>>),
 }
 #[derive(Clone, Debug, PartialEq)]
 struct GrenSyntaxPatternField {
@@ -8934,6 +8935,29 @@ fn gren_syntax_pattern_not_parenthesized_into(
                     so_far,
                     gren_syntax_node_unbox(value_node),
                 );
+            }
+        }
+        GrenSyntaxPattern::ArrayExact(elements) => {
+            let mut elements_iterator = elements.iter();
+            match elements_iterator.next() {
+                None => {
+                    so_far.push_str("[]");
+                }
+                Some(element_node0) => {
+                    so_far.push_str("[ ");
+                    gren_syntax_pattern_not_parenthesized_into(
+                        so_far,
+                        gren_syntax_node_as_ref(element_node0),
+                    );
+                    for element_node in elements_iterator {
+                        so_far.push_str(", ");
+                        gren_syntax_pattern_not_parenthesized_into(
+                            so_far,
+                            gren_syntax_node_as_ref(element_node),
+                        );
+                    }
+                    so_far.push_str(" ]");
+                }
             }
         }
     }
@@ -12412,6 +12436,12 @@ fn gren_syntax_pattern_find_reference_at_position<'a>(
                 })
             }
         }
+        GrenSyntaxPattern::ArrayExact(elements) => elements.iter().find_map(|element| {
+            gren_syntax_pattern_find_reference_at_position(
+                gren_syntax_node_as_ref(element),
+                position,
+            )
+        }),
     }
 }
 
@@ -14081,6 +14111,16 @@ fn gren_syntax_pattern_uses_of_reference_into(
                 );
             }
         }
+        GrenSyntaxPattern::ArrayExact(elements) => {
+            for element in elements {
+                gren_syntax_pattern_uses_of_reference_into(
+                    uses_so_far,
+                    module_origin_lookup,
+                    gren_syntax_node_as_ref(element),
+                    symbol_to_collect_uses_of,
+                );
+            }
+        }
     }
 }
 
@@ -14160,6 +14200,14 @@ fn gren_syntax_pattern_bindings_into<'a>(
                 gren_syntax_pattern_bindings_into(
                     bindings_so_far,
                     gren_syntax_node_unbox(value_node),
+                );
+            }
+        }
+        GrenSyntaxPattern::ArrayExact(elements) => {
+            for element_node in elements {
+                gren_syntax_pattern_bindings_into(
+                    bindings_so_far,
+                    gren_syntax_node_as_ref(element_node),
                 );
             }
         }
@@ -15039,6 +15087,14 @@ fn gren_syntax_highlight_pattern_into(
                 gren_syntax_highlight_pattern_into(
                     highlighted_so_far,
                     gren_syntax_node_unbox(value_node),
+                );
+            }
+        }
+        GrenSyntaxPattern::ArrayExact(elements) => {
+            for element_node in elements {
+                gren_syntax_highlight_pattern_into(
+                    highlighted_so_far,
+                    gren_syntax_node_as_ref(element_node),
                 );
             }
         }
@@ -16801,6 +16857,7 @@ fn parse_gren_syntax_pattern_not_as_node(
             .or_else(|| parse_gren_lowercase_as_box_str(state).map(GrenSyntaxPattern::Variable))
             .or_else(|| parse_gren_char(state).map(GrenSyntaxPattern::Char))
             .or_else(|| parse_gren_syntax_pattern_string(state))
+            .or_else(|| parse_gren_syntax_pattern_array_exact(state))
             .or_else(|| parse_gren_syntax_pattern_parenthesized(state))
             .or_else(|| parse_gren_syntax_pattern_record(state))
             .or_else(|| parse_gren_syntax_pattern_integer(state))
@@ -16832,8 +16889,28 @@ fn parse_gren_syntax_pattern_not_space_separated(
         })
         .or_else(|| parse_gren_char(state).map(GrenSyntaxPattern::Char))
         .or_else(|| parse_gren_syntax_pattern_string(state))
+        .or_else(|| parse_gren_syntax_pattern_array_exact(state))
         .or_else(|| parse_gren_syntax_pattern_record(state))
         .or_else(|| parse_gren_syntax_pattern_integer(state))
+}
+fn parse_gren_syntax_pattern_array_exact(state: &mut ParseState) -> Option<GrenSyntaxPattern> {
+    if !parse_symbol(state, "[") {
+        return None;
+    }
+    parse_gren_whitespace_and_comments(state);
+    while parse_symbol(state, ",") {
+        parse_gren_whitespace_and_comments(state);
+    }
+    let mut elements: Vec<GrenSyntaxNode<GrenSyntaxPattern>> = Vec::new();
+    while let Some(pattern_node) = parse_gren_syntax_pattern_space_separated_node(state) {
+        elements.push(pattern_node);
+        parse_gren_whitespace_and_comments(state);
+        while parse_symbol(state, ",") {
+            parse_gren_whitespace_and_comments(state);
+        }
+    }
+    let _: bool = parse_symbol(state, "]");
+    Some(GrenSyntaxPattern::ArrayExact(elements))
 }
 fn parse_gren_syntax_pattern_ignored(state: &mut ParseState) -> Option<GrenSyntaxPattern> {
     if !parse_symbol(state, "_") {
