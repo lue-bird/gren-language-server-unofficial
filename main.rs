@@ -11917,10 +11917,13 @@ enum GrenSyntaxSymbol<'a> {
         signature_type: Option<GrenSyntaxNode<&'a GrenSyntaxType>>,
         scope_expression: GrenSyntaxNode<&'a GrenSyntaxExpression>,
     },
+
+    // TODO use better representation of VariableOrVariantOrOperator:
+    // add LocalVariable { origin, scope : Option<Node<Expression>> }
+    // and remove `local_bindings` from VariableOrVariantOrOperator
     VariableOrVariantOrOperator {
         qualification: &'a str,
         name: &'a str,
-        // consider wrapping in Option
         local_bindings: GrenLocalBindings<'a>,
     },
     Type {
@@ -12435,6 +12438,7 @@ fn gren_syntax_declaration_find_reference_at_position<'a>(
                         .or_else(|| {
                             parameters.iter().find_map(|parameter| {
                                 gren_syntax_pattern_find_reference_at_position(
+                                    maybe_result.as_ref().map(gren_syntax_node_as_ref),
                                     gren_syntax_node_as_ref(parameter),
                                     position,
                                 )
@@ -12447,24 +12451,59 @@ fn gren_syntax_declaration_find_reference_at_position<'a>(
 }
 
 fn gren_syntax_pattern_find_reference_at_position<'a>(
-    gren_syntax_pattern_node: GrenSyntaxNode<&'a GrenSyntaxPattern>,
+    scope_expression: Option<GrenSyntaxNode<&'a GrenSyntaxExpression>>,
+    pattern_node: GrenSyntaxNode<&'a GrenSyntaxPattern>,
     position: lsp_types::Position,
 ) -> Option<GrenSyntaxNode<GrenSyntaxSymbol<'a>>> {
-    match gren_syntax_pattern_node.value {
+    match pattern_node.value {
         GrenSyntaxPattern::As {
             pattern,
             as_keyword_range: _,
-            variable: _,
-        } => gren_syntax_pattern_find_reference_at_position(
-            gren_syntax_node_unbox(pattern),
-            position,
-        ),
+            variable: maybe_variable,
+        } => maybe_variable
+            .as_ref()
+            .and_then(|variable_node| {
+                if lsp_range_includes_position(variable_node.range, position) {
+                    Some(GrenSyntaxNode {
+                        range: variable_node.range,
+                        value: GrenSyntaxSymbol::VariableOrVariantOrOperator {
+                            qualification: "",
+                            name: &variable_node.value,
+                            local_bindings: vec![(
+                                match scope_expression {
+                                    None => GrenSyntaxNode {
+                                        range: lsp_types::Range::default(),
+                                        value: &GrenSyntaxExpression::Parenthesized(None),
+                                    },
+                                    Some(scope_expression) => scope_expression,
+                                },
+                                vec![GrenLocalBinding {
+                                    name: &variable_node.value,
+                                    origin: LocalBindingOrigin::PatternVariable(
+                                        variable_node.range,
+                                    ),
+                                }],
+                            )],
+                        },
+                    })
+                } else {
+                    None
+                }
+            })
+            .or_else(|| {
+                gren_syntax_pattern_find_reference_at_position(
+                    scope_expression,
+                    gren_syntax_node_unbox(pattern),
+                    position,
+                )
+            }),
         GrenSyntaxPattern::Char(_) => None,
         GrenSyntaxPattern::Ignored(_) => None,
         GrenSyntaxPattern::Int { .. } => None,
         GrenSyntaxPattern::Parenthesized(maybe_in_parens) => {
             maybe_in_parens.as_ref().and_then(|in_parens| {
                 gren_syntax_pattern_find_reference_at_position(
+                    scope_expression,
                     gren_syntax_node_unbox(in_parens),
                     position,
                 )
@@ -12472,7 +12511,32 @@ fn gren_syntax_pattern_find_reference_at_position<'a>(
         }
         GrenSyntaxPattern::Record(_) => None,
         GrenSyntaxPattern::String { .. } => None,
-        GrenSyntaxPattern::Variable(_) => None,
+        GrenSyntaxPattern::Variable(variable_name) => {
+            if lsp_range_includes_position(pattern_node.range, position) {
+                Some(GrenSyntaxNode {
+                    range: pattern_node.range,
+                    value: GrenSyntaxSymbol::VariableOrVariantOrOperator {
+                        qualification: "",
+                        name: variable_name,
+                        local_bindings: vec![(
+                            match scope_expression {
+                                None => GrenSyntaxNode {
+                                    range: lsp_types::Range::default(),
+                                    value: &GrenSyntaxExpression::Parenthesized(None),
+                                },
+                                Some(scope_expression) => scope_expression,
+                            },
+                            vec![GrenLocalBinding {
+                                name: variable_name,
+                                origin: LocalBindingOrigin::PatternVariable(pattern_node.range),
+                            }],
+                        )],
+                    },
+                })
+            } else {
+                None
+            }
+        }
         GrenSyntaxPattern::Variant {
             reference,
             value: maybe_value,
@@ -12489,6 +12553,7 @@ fn gren_syntax_pattern_find_reference_at_position<'a>(
             } else {
                 maybe_value.as_ref().and_then(|value| {
                     gren_syntax_pattern_find_reference_at_position(
+                        scope_expression,
                         gren_syntax_node_unbox(value),
                         position,
                     )
@@ -12497,6 +12562,7 @@ fn gren_syntax_pattern_find_reference_at_position<'a>(
         }
         GrenSyntaxPattern::ArrayExact(elements) => elements.iter().find_map(|element| {
             gren_syntax_pattern_find_reference_at_position(
+                scope_expression,
                 gren_syntax_node_as_ref(element),
                 position,
             )
@@ -12687,6 +12753,7 @@ fn gren_syntax_expression_find_reference_at_position<'a>(
                 .iter()
                 .try_fold(local_bindings, |mut local_bindings, case| {
                     if let Some(found_symbol) = gren_syntax_pattern_find_reference_at_position(
+                        case.result.as_ref().map(gren_syntax_node_as_ref),
                         gren_syntax_node_as_ref(&case.pattern),
                         position,
                     ) {
@@ -12790,6 +12857,7 @@ fn gren_syntax_expression_find_reference_at_position<'a>(
         } => {
             if let Some(found_symbol) = parameters.iter().find_map(|parameter| {
                 gren_syntax_pattern_find_reference_at_position(
+                    maybe_result.as_ref().map(gren_syntax_node_unbox),
                     gren_syntax_node_as_ref(parameter),
                     position,
                 )
@@ -12974,6 +13042,7 @@ fn gren_syntax_let_declaration_find_reference_at_position<'a>(
             expression: maybe_expression,
         } => {
             on_some_break(gren_syntax_pattern_find_reference_at_position(
+                Some(scope_expression),
                 gren_syntax_node_as_ref(pattern),
                 position,
             ))?;
@@ -13010,6 +13079,7 @@ fn gren_syntax_let_declaration_find_reference_at_position<'a>(
             }
             on_some_break(parameters.iter().find_map(|parameter| {
                 gren_syntax_pattern_find_reference_at_position(
+                    maybe_result.as_ref().map(gren_syntax_node_as_ref),
                     gren_syntax_node_as_ref(parameter),
                     position,
                 )
