@@ -7647,7 +7647,7 @@ fn module_origin_lookup_for_implicit_imports() -> ModuleOriginLookup<'static> {
             ("^", "Basics"),
             ("toFloat", "Basics"),
             ("==", "Basics"),
-            ("!=", "Basics"),
+            ("/=", "Basics"),
             ("<", "Basics"),
             (">", "Basics"),
             ("<=", "Basics"),
@@ -9014,7 +9014,17 @@ fn gren_syntax_pattern_parenthesized_if_space_separated_into(
     pattern_node: GrenSyntaxNode<&GrenSyntaxPattern>,
 ) {
     match pattern_node.value {
-        GrenSyntaxPattern::As { .. } => {
+        GrenSyntaxPattern::Parenthesized(Some(in_parens)) => {
+            gren_syntax_pattern_parenthesized_if_space_separated_into(
+                so_far,
+                gren_syntax_node_unbox(in_parens),
+            )
+        }
+        GrenSyntaxPattern::As { .. }
+        | GrenSyntaxPattern::Variant {
+            reference: _,
+            value: Some(_),
+        } => {
             gren_syntax_pattern_parenthesized_into(so_far, pattern_node);
         }
         _ => {
@@ -16303,7 +16313,8 @@ fn parse_gren_operator_node(state: &mut ParseState) -> Option<GrenSyntaxNode<&'s
     // can be optimized by only slicing once for each symbol length
     let start_position: lsp_types::Position = state.position;
     parse_symbol_as_str(state, "==")
-        .or_else(|| parse_symbol_as_str(state, "!="))
+        .or_else(|| parse_symbol_as_str(state, "/="))
+        .or_else(|| parse_symbol_as(state, "!=", "/="))
         .or_else(|| parse_symbol_as_str(state, "++"))
         .or_else(|| parse_symbol_as_str(state, "<|"))
         .or_else(|| parse_symbol_as_str(state, "|>"))
@@ -16335,7 +16346,8 @@ fn parse_gren_operator_followed_by_closing_paren(
     // can be optimized by only slicing once for each symbol length
     let start_position: lsp_types::Position = state.position;
     parse_symbol_as(state, "==)", "==")
-        .or_else(|| parse_symbol_as(state, "!=)", "!="))
+        .or_else(|| parse_symbol_as(state, "/=)", "/="))
+        .or_else(|| parse_symbol_as(state, "!=)", "/="))
         .or_else(|| parse_symbol_as(state, "++)", "++"))
         .or_else(|| parse_symbol_as(state, "<|)", "<|"))
         .or_else(|| parse_symbol_as(state, "|>)", "|>"))
