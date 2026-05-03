@@ -11008,7 +11008,7 @@ fn gren_syntax_module_format(module_state: &ModuleState) -> String {
         }
     }
     if let Some(module_documentation_node) = &gren_syntax_module.documentation {
-        builder.push('\n');
+        builder.push_str("\n\n");
         gren_syntax_module_level_comments(
             &mut builder,
             gren_syntax_comments_in_range(
@@ -11125,12 +11125,17 @@ fn gren_syntax_module_documentation_comment_into(
     module_documentation_elements: &[GrenSyntaxNode<GrenSyntaxModuleDocumentationElement>],
 ) {
     so_far.push_str("{-|");
+    let mut previous_element_was_at_docs = false;
     for module_documentation_element in module_documentation_elements {
         match &module_documentation_element.value {
             GrenSyntaxModuleDocumentationElement::Markdown(markdown_node) => {
+                if previous_element_was_at_docs {
+                    so_far.push('\n');
+                }
                 so_far.push_str(markdown_node);
             }
             GrenSyntaxModuleDocumentationElement::AtDocs(expose_group_names) => {
+                previous_element_was_at_docs = true;
                 so_far.push_str("@docs ");
                 if let Some((expose_name0_node, expose_name1_up)) = expose_group_names.split_first()
                 {
