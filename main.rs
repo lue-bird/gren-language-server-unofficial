@@ -7238,9 +7238,9 @@ enum GrenSyntaxExpression {
         argument0: GrenSyntaxNode<Box<GrenSyntaxExpression>>,
         argument1_up: Vec<GrenSyntaxNode<GrenSyntaxExpression>>,
     },
-    CaseOf {
+    WhenIs {
         matched: Option<GrenSyntaxNode<Box<GrenSyntaxExpression>>>,
-        of_keyword_range: Option<lsp_types::Range>,
+        is_keyword_range: Option<lsp_types::Range>,
         cases: Vec<GrenSyntaxExpressionCase>,
     },
     Char(Option<char>),
@@ -8245,10 +8245,15 @@ fn gren_syntax_comments_in_range(
     let comments_in_range_start_index: usize = comments
         .binary_search_by(|comment_node| comment_node.range.start.cmp(&range.start))
         .unwrap_or_else(|i| i);
-    let comments_in_range_end_exclusive_index: usize = comments
-        .binary_search_by(|comment_node| comment_node.range.start.cmp(&range.end))
+    let comments_after_start_end_inclusive_index: usize = comments[comments_in_range_start_index..]
+        .binary_search_by(|comment_node| comment_node.range.end.cmp(&range.end))
         .unwrap_or_else(|i| i);
-    &comments[comments_in_range_start_index..comments_in_range_end_exclusive_index]
+    &comments
+        .get(
+            comments_in_range_start_index
+                ..(comments_in_range_start_index + comments_after_start_end_inclusive_index),
+        )
+        .unwrap_or(&[])
 }
 fn gren_syntax_comments_from_position(
     comments: &[GrenSyntaxNode<GrenSyntaxComment>],
@@ -8706,7 +8711,17 @@ fn gren_syntax_type_function_into<'a>(
             space_or_linebreak_indented_into(
                 so_far,
                 if comments_around_arrow.is_empty() {
-                    gren_syntax_range_line_span(output_node.range, comments)
+                    gren_syntax_range_line_span(
+                        match output_node.value {
+                            GrenSyntaxType::Function {
+                                input: output_function_input_node,
+                                arrow_key_symbol_range: _,
+                                output: _,
+                            } => output_function_input_node.range,
+                            _ => output_node.range,
+                        },
+                        comments,
+                    )
                 } else {
                     LineSpan::Multiple
                 },
@@ -9221,41 +9236,38 @@ fn gren_syntax_expression_not_parenthesized_into(
                 previous_syntax_end = argument_node.range.end;
             }
         }
-        GrenSyntaxExpression::CaseOf {
+        GrenSyntaxExpression::WhenIs {
             matched: maybe_matched,
-            of_keyword_range: maybe_of_keyword_range,
+            is_keyword_range: maybe_is_keyword_range,
             cases,
         } => {
             so_far.push_str("when");
-            let previous_syntax_that_covered_comments_end: lsp_types::Position;
             match maybe_matched {
-                None => match maybe_of_keyword_range {
+                None => match maybe_is_keyword_range {
                     None => {
                         so_far.push_str("  ");
-                        previous_syntax_that_covered_comments_end = expression_node.range.start;
                     }
-                    Some(of_keyword_range) => {
-                        let comments_between_case_and_of_keywords: &[GrenSyntaxNode<
+                    Some(is_keyword_range) => {
+                        let comments_between_when_and_is_keywords: &[GrenSyntaxNode<
                             GrenSyntaxComment,
                         >] = gren_syntax_comments_in_range(
                             comments,
                             lsp_types::Range {
                                 start: expression_node.range.start,
-                                end: of_keyword_range.end,
+                                end: is_keyword_range.end,
                             },
                         );
-                        if comments_between_case_and_of_keywords.is_empty() {
+                        if comments_between_when_and_is_keywords.is_empty() {
                             so_far.push_str("  ");
                         } else {
                             linebreak_indented_into(so_far, next_indent(indent));
                             gren_syntax_comments_into(
                                 so_far,
                                 next_indent(indent),
-                                comments_between_case_and_of_keywords,
+                                comments_between_when_and_is_keywords,
                             );
                             linebreak_indented_into(so_far, indent);
                         }
-                        previous_syntax_that_covered_comments_end = of_keyword_range.end;
                     }
                 },
                 Some(matched_node) => {
@@ -9267,22 +9279,22 @@ fn gren_syntax_expression_not_parenthesized_into(
                                 end: matched_node.range.start,
                             },
                         );
-                    let comments_before_of_keyword: &[GrenSyntaxNode<GrenSyntaxComment>] = if cases
+                    let comments_before_is_keyword: &[GrenSyntaxNode<GrenSyntaxComment>] = if cases
                         .is_empty()
-                        && let Some(of_keyword_range) = maybe_of_keyword_range
+                        && let Some(is_keyword_range) = maybe_is_keyword_range
                     {
                         gren_syntax_comments_in_range(
                             comments,
                             lsp_types::Range {
                                 start: matched_node.range.start,
-                                end: of_keyword_range.start,
+                                end: is_keyword_range.start,
                             },
                         )
                     } else {
                         &[]
                     };
                     let before_cases_line_span: LineSpan = if comments_before_matched.is_empty()
-                        && comments_before_of_keyword.is_empty()
+                        && comments_before_is_keyword.is_empty()
                     {
                         gren_syntax_expression_line_span(
                             comments,
@@ -9308,18 +9320,13 @@ fn gren_syntax_expression_not_parenthesized_into(
                         gren_syntax_node_unbox(matched_node),
                     );
                     space_or_linebreak_indented_into(so_far, before_cases_line_span, indent);
-                    if let Some(of_keyword_range) = maybe_of_keyword_range
-                        && !comments_before_of_keyword.is_empty()
-                    {
+                    if maybe_is_keyword_range.is_some() && !comments_before_is_keyword.is_empty() {
                         linebreak_indented_into(so_far, indent);
                         gren_syntax_comments_then_linebreak_indented_into(
                             so_far,
                             next_indent(indent),
                             comments_before_matched,
                         );
-                        previous_syntax_that_covered_comments_end = of_keyword_range.end;
-                    } else {
-                        previous_syntax_that_covered_comments_end = matched_node.range.end;
                     }
                 }
             }
@@ -9330,7 +9337,10 @@ fn gren_syntax_expression_not_parenthesized_into(
                     so_far,
                     next_indent(indent),
                     comments,
-                    previous_syntax_that_covered_comments_end,
+                    maybe_is_keyword_range
+                        .map(|r| r.end)
+                        .or_else(|| maybe_matched.as_ref().map(|n| n.range.end))
+                        .unwrap_or(expression_node.range.start),
                     case0,
                 );
                 for case in case1_up {
@@ -9811,7 +9821,7 @@ fn gren_syntax_expression_not_parenthesized_into(
             result: maybe_result,
         } => {
             so_far.push_str("let");
-            let mut previous_declaration_end: lsp_types::Position = expression_node.range.end;
+            let mut previous_declaration_end: lsp_types::Position = expression_node.range.start;
             match declarations.split_last() {
                 None => {
                     linebreak_indented_into(so_far, next_indent(indent));
@@ -10229,7 +10239,7 @@ fn gren_syntax_case_into(
                 comments,
                 lsp_types::Range {
                     start: before_case_arrow_key_symbol,
-                    end: result_node.range.end,
+                    end: result_node.range.start,
                 },
             ),
         );
@@ -10359,16 +10369,14 @@ fn gren_syntax_let_declaration_into(
             equals_key_symbol_range: maybe_equals_key_symbol_range,
             expression: maybe_expression,
         } => {
-            gren_syntax_comments_into(
+            gren_syntax_comments_then_linebreak_indented_into(
                 so_far,
                 indent,
                 gren_syntax_comments_in_range(
                     comments,
                     lsp_types::Range {
                         start: let_declaration_node.range.start,
-                        end: maybe_equals_key_symbol_range
-                            .map(|range| range.start)
-                            .unwrap_or(pattern_node.range.end),
+                        end: pattern_node.range.start,
                     },
                 ),
             );
@@ -10376,22 +10384,50 @@ fn gren_syntax_let_declaration_into(
                 so_far,
                 gren_syntax_node_as_ref(pattern_node),
             );
-            so_far.push_str(" =");
-            linebreak_indented_into(so_far, next_indent(indent));
-            if let Some(expression_node) = maybe_expression {
-                gren_syntax_comments_into(
-                    so_far,
-                    next_indent(indent),
-                    gren_syntax_comments_in_range(
+            match maybe_expression {
+                None => {
+                    if let Some(equals_key_symbol_range) = maybe_equals_key_symbol_range {
+                        let comments_before_equals = gren_syntax_comments_in_range(
+                            comments,
+                            lsp_types::Range {
+                                start: pattern_node.range.end,
+                                end: equals_key_symbol_range.start,
+                            },
+                        );
+                        if !comments_before_equals.is_empty() {
+                            gren_syntax_comments_then_linebreak_indented_into(
+                                so_far,
+                                next_indent(indent),
+                                comments_before_equals,
+                            );
+                        } else {
+                            so_far.push(' ');
+                        }
+                        so_far.push_str("=");
+                        linebreak_indented_into(so_far, next_indent(indent));
+                    }
+                }
+                Some(expression_node) => {
+                    so_far.push_str(" =");
+                    linebreak_indented_into(so_far, next_indent(indent));
+                    gren_syntax_comments_then_linebreak_indented_into(
+                        so_far,
+                        next_indent(indent),
+                        gren_syntax_comments_in_range(
+                            comments,
+                            lsp_types::Range {
+                                start: pattern_node.range.end,
+                                end: expression_node.range.start,
+                            },
+                        ),
+                    );
+                    gren_syntax_expression_not_parenthesized_into(
+                        so_far,
+                        next_indent(indent),
                         comments,
-                        lsp_types::Range {
-                            start: maybe_equals_key_symbol_range
-                                .map(|range| range.end)
-                                .unwrap_or(pattern_node.range.end),
-                            end: expression_node.range.end,
-                        },
-                    ),
-                );
+                        gren_syntax_node_as_ref(expression_node),
+                    );
+                }
             }
         }
         GrenSyntaxLetDeclaration::VariableDeclaration {
@@ -10607,7 +10643,7 @@ fn gren_syntax_expression_line_span(
     if gren_syntax_comments_in_range(comments, expression_node.range).is_empty()
         && expression_node.range.start.line == expression_node.range.end.line
         && !gren_syntax_expression_any_sub(expression_node, |sub_node| match sub_node.value {
-            GrenSyntaxExpression::CaseOf { .. } => true,
+            GrenSyntaxExpression::WhenIs { .. } => true,
             GrenSyntaxExpression::IfThenElse { .. } => true,
             GrenSyntaxExpression::LetIn { .. } => true,
             GrenSyntaxExpression::String {
@@ -10710,7 +10746,7 @@ fn gren_syntax_expression_parenthesized_if_space_separated_into(
                 | GrenSyntaxExpression::LetIn { .. }
                 | GrenSyntaxExpression::InfixOperationIgnoringPrecedence { .. }
                 | GrenSyntaxExpression::Call { .. }
-                | GrenSyntaxExpression::CaseOf { .. } => true,
+                | GrenSyntaxExpression::WhenIs { .. } => true,
                 GrenSyntaxExpression::Char(_)
                 | GrenSyntaxExpression::Float(_)
                 | GrenSyntaxExpression::Integer { .. }
@@ -10766,7 +10802,7 @@ fn gren_syntax_expression_parenthesized_if_not_call_but_space_separated_into(
                 | GrenSyntaxExpression::Lambda { .. }
                 | GrenSyntaxExpression::LetIn { .. }
                 | GrenSyntaxExpression::InfixOperationIgnoringPrecedence { .. }
-                | GrenSyntaxExpression::CaseOf { .. } => true,
+                | GrenSyntaxExpression::WhenIs { .. } => true,
                 GrenSyntaxExpression::Call { .. }
                 | GrenSyntaxExpression::Char(_)
                 | GrenSyntaxExpression::Float(_)
@@ -10823,9 +10859,9 @@ fn gren_syntax_expression_any_sub(
                     )
                 })
         }
-        GrenSyntaxExpression::CaseOf {
+        GrenSyntaxExpression::WhenIs {
             matched: maybe_matched,
-            of_keyword_range: _,
+            is_keyword_range: _,
             cases,
         } => {
             maybe_matched.as_ref().is_some_and(|matched_node| {
@@ -10963,8 +10999,8 @@ fn gren_syntax_module_format(module_state: &ModuleState) -> String {
             );
         }
     }
-    builder.push_str("\n\n");
     if let Some(module_documentation_node) = &gren_syntax_module.documentation {
+        builder.push('\n');
         gren_syntax_module_level_comments(
             &mut builder,
             gren_syntax_comments_in_range(
@@ -10979,24 +11015,34 @@ fn gren_syntax_module_format(module_state: &ModuleState) -> String {
             &mut builder,
             &module_documentation_node.value,
         );
-        builder.push_str("\n\n");
         previous_syntax_end = module_documentation_node.range.end;
     }
-    if let Some(last_import_node) = gren_syntax_module.imports.last() {
-        gren_syntax_module_level_comments(
-            &mut builder,
-            gren_syntax_comments_in_range(
-                &gren_syntax_module.comments,
-                lsp_types::Range {
-                    start: previous_syntax_end,
-                    end: last_import_node.range.end,
-                },
-            ),
-        );
-        gren_syntax_imports_then_linebreak_into(&mut builder, &gren_syntax_module.imports);
-        previous_syntax_end = last_import_node.range.end;
-    } else {
-        builder.push('\n');
+    match gren_syntax_module.imports.last() {
+        None => {
+            builder.push('\n');
+        }
+        Some(last_import_node) => {
+            match &gren_syntax_module.documentation {
+                None => {
+                    builder.push_str("\n\n");
+                }
+                Some(_) => {
+                    builder.push('\n');
+                }
+            }
+            gren_syntax_module_level_comments(
+                &mut builder,
+                gren_syntax_comments_in_range(
+                    &gren_syntax_module.comments,
+                    lsp_types::Range {
+                        start: previous_syntax_end,
+                        end: last_import_node.range.end,
+                    },
+                ),
+            );
+            gren_syntax_imports_then_linebreak_into(&mut builder, &gren_syntax_module.imports);
+            previous_syntax_end = last_import_node.range.end;
+        }
     }
     for documented_declaration_or_err in &gren_syntax_module.declarations {
         match documented_declaration_or_err {
@@ -12611,9 +12657,9 @@ fn gren_syntax_expression_find_reference_at_position<'a>(
                     )
                 })
         }
-        GrenSyntaxExpression::CaseOf {
+        GrenSyntaxExpression::WhenIs {
             matched: maybe_matched,
-            of_keyword_range: _,
+            is_keyword_range: _,
             cases,
         } => {
             if let Some(matched_node) = maybe_matched {
@@ -13628,9 +13674,9 @@ fn gren_syntax_expression_uses_of_reference_into(
                 );
             }
         }
-        GrenSyntaxExpression::CaseOf {
+        GrenSyntaxExpression::WhenIs {
             matched: maybe_matched,
-            of_keyword_range: _,
+            is_keyword_range: _,
             cases,
         } => {
             if let Some(matched_node) = maybe_matched {
@@ -15244,9 +15290,9 @@ fn gren_syntax_highlight_expression_into(
                 );
             }
         }
-        GrenSyntaxExpression::CaseOf {
+        GrenSyntaxExpression::WhenIs {
             matched: maybe_matched,
-            of_keyword_range: maybe_of_keyword_range,
+            is_keyword_range: maybe_of_keyword_range,
             cases,
         } => {
             highlighted_so_far.push(GrenSyntaxNode {
@@ -17659,9 +17705,9 @@ fn parse_gren_syntax_expression_case_of(
                     Some(matched_node) => matched_node.range.end,
                 },
             },
-            value: GrenSyntaxExpression::CaseOf {
+            value: GrenSyntaxExpression::WhenIs {
                 matched: maybe_matched.map(gren_syntax_node_box),
-                of_keyword_range: None,
+                is_keyword_range: None,
                 cases: vec![],
             },
         },
@@ -17673,9 +17719,9 @@ fn parse_gren_syntax_expression_case_of(
                         start: case_keyword_range.start,
                         end: of_keyword_range.end,
                     },
-                    value: GrenSyntaxExpression::CaseOf {
+                    value: GrenSyntaxExpression::WhenIs {
                         matched: maybe_matched.map(gren_syntax_node_box),
-                        of_keyword_range: Some(of_keyword_range),
+                        is_keyword_range: Some(of_keyword_range),
                         cases: vec![],
                     },
                 }
@@ -17699,9 +17745,9 @@ fn parse_gren_syntax_expression_case_of(
                         start: case_keyword_range.start,
                         end: full_end_position,
                     },
-                    value: GrenSyntaxExpression::CaseOf {
+                    value: GrenSyntaxExpression::WhenIs {
                         matched: maybe_matched.map(gren_syntax_node_box),
-                        of_keyword_range: Some(of_keyword_range),
+                        is_keyword_range: Some(of_keyword_range),
                         cases,
                     },
                 }
