@@ -9051,9 +9051,12 @@ fn gren_char_needs_unicode_escaping(char: char) -> bool {
     (char.len_utf16() >= 2) || char.is_control()
 }
 fn gren_unicode_char_escape_into(so_far: &mut String, char: char) {
-    for utf16_code in char.encode_utf16(&mut [0; 2]) {
+    if char.len_utf16() <= 1 {
         use std::fmt::Write as _;
-        let _ = write!(so_far, "\\u{{{:04X}}}", utf16_code);
+        let _ = write!(so_far, "\\u{{{:04X}}}", u32::from(char));
+    } else {
+        use std::fmt::Write as _;
+        let _ = write!(so_far, "\\u{{{:06X}}}", u32::from(char));
     }
 }
 fn gren_int_into(
@@ -9131,15 +9134,17 @@ fn gren_string_into(
                     quote_count_to_insert += 1;
                     continue 'pushing_escaped_content;
                 }
-                so_far.extend(std::iter::repeat_n('\"', quote_count_to_insert));
+                if quote_count_to_insert >= 3 {
+                    so_far.extend(std::iter::repeat_n("\\\"", quote_count_to_insert));
+                } else {
+                    so_far.extend(std::iter::repeat_n('\"', quote_count_to_insert));
+                }
+                quote_count_to_insert = 0;
                 match char {
                     '\\' => so_far.push_str("\\\\"),
                     '\t' => so_far.push_str("\\t"),
                     '\r' => so_far.push('\r'),
                     '\n' => so_far.push('\n'),
-                    '\"' => {
-                        quote_count_to_insert += 1;
-                    }
                     other_character => {
                         if gren_char_needs_unicode_escaping(other_character) {
                             gren_unicode_char_escape_into(so_far, other_character);
