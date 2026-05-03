@@ -9945,7 +9945,7 @@ fn gren_syntax_expression_not_parenthesized_into(
                     for element_node in elements_before_last {
                         gren_syntax_comments_then_linebreak_indented_into(
                             so_far,
-                            indent,
+                            indent + 2,
                             gren_syntax_comments_in_range(
                                 comments,
                                 lsp_types::Range {
