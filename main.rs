@@ -10272,22 +10272,20 @@ fn gren_syntax_expression_fields_into<'a>(
     let mut previous_syntax_end: lsp_types::Position = field0.name.range.end;
     so_far.push_str(" =");
     if let Some(field0_value_node) = &field0.value {
-        let comments_before_field0_value = gren_syntax_comments_in_range(
-            comments,
-            lsp_types::Range {
-                start: field0.name.range.end,
-                end: field0_value_node.range.start,
-            },
-        );
+        let range_between_field0_name_value = lsp_types::Range {
+            start: field0.name.range.end,
+            end: field0_value_node.range.start,
+        };
+        let comments_before_field0_value =
+            gren_syntax_comments_in_range(comments, range_between_field0_name_value);
         space_or_linebreak_indented_into(
             so_far,
-            if comments_before_field0_value.is_empty() {
-                gren_syntax_expression_line_span(
+            match gren_syntax_range_line_span(range_between_field0_name_value, comments) {
+                LineSpan::Multiple => LineSpan::Multiple,
+                LineSpan::Single => gren_syntax_expression_line_span(
                     comments,
                     gren_syntax_node_as_ref(field0_value_node),
-                )
-            } else {
-                LineSpan::Multiple
+                ),
             },
             next_indent(indent + 2),
         );
@@ -10324,25 +10322,20 @@ fn gren_syntax_expression_fields_into<'a>(
         previous_syntax_end = field.name.range.end;
         so_far.push_str(" =");
         if let Some(field_value_node) = &field.value {
-            let comments_before_field_value = gren_syntax_comments_in_range(
-                comments,
-                lsp_types::Range {
-                    start: field.name.range.end,
-                    end: field_value_node.range.start,
-                },
-            );
+            let range_between_field_name_value = lsp_types::Range {
+                start: field.name.range.end,
+                end: field_value_node.range.start,
+            };
+            let comments_before_field_value =
+                gren_syntax_comments_in_range(comments, range_between_field_name_value);
             space_or_linebreak_indented_into(
                 so_far,
-                if comments_before_field_value.is_empty() {
-                    gren_syntax_range_line_span(
-                        lsp_types::Range {
-                            start: field.name.range.end,
-                            end: field_value_node.range.end,
-                        },
+                match gren_syntax_range_line_span(range_between_field_name_value, comments) {
+                    LineSpan::Multiple => LineSpan::Multiple,
+                    LineSpan::Single => gren_syntax_expression_line_span(
                         comments,
-                    )
-                } else {
-                    LineSpan::Multiple
+                        gren_syntax_node_as_ref(field_value_node),
+                    ),
                 },
                 next_indent(indent + 2),
             );
@@ -17210,9 +17203,9 @@ fn parse_gren_string_triple_quoted(state: &mut ParseState) -> Option<String> {
 fn parse_gren_text_content_char(state: &mut ParseState) -> Option<char> {
     parse_symbol_as(state, "\\\\", '\\')
         .or_else(|| parse_symbol_as(state, "\\'", '\''))
-        .or_else(|| parse_symbol_as(state, "\\\n", '\n'))
-        .or_else(|| parse_symbol_as(state, "\\\r", '\r'))
-        .or_else(|| parse_symbol_as(state, "\\\t", '\t'))
+        .or_else(|| parse_symbol_as(state, "\\n", '\n'))
+        .or_else(|| parse_symbol_as(state, "\\r", '\r'))
+        .or_else(|| parse_symbol_as(state, "\\t", '\t'))
         .or_else(|| parse_symbol_as(state, "\\\"", '"'))
         .or_else(|| {
             let start_offset_utf8: usize = state.offset_utf8;
