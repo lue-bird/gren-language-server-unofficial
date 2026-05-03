@@ -10547,7 +10547,7 @@ fn gren_syntax_variable_declaration_into(
     } else {
         LineSpan::Multiple
     };
-    let mut previous_parameter_end: lsp_types::Position = start_name_node.range.start;
+    let mut previous_parameter_end: lsp_types::Position = syntax_before_parameters_end;
     for parameter_node in parameters {
         space_or_linebreak_indented_into(so_far, parameters_line_span, next_indent(indent));
         gren_syntax_comments_then_linebreak_indented_into(
