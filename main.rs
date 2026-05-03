@@ -17236,33 +17236,15 @@ fn parse_gren_text_content_char(state: &mut ParseState) -> Option<char> {
             let unicode_hex_str: &str =
                 &state.source[unicode_hex_start_offset_utf8..state.offset_utf8];
             let _: bool = parse_symbol(state, "}");
-            let Ok(first_utf16_code) = u16::from_str_radix(unicode_hex_str, 16) else {
+            let Ok(char_code) = u32::from_str_radix(unicode_hex_str, 16) else {
                 reset_parse_state(state);
                 return None;
             };
-            match char::from_u32(u32::from(first_utf16_code)) {
+            match char::from_u32(char_code) {
                 Some(char) => Some(char),
                 None => {
-                    if !parse_symbol(state, "\\u{") {
-                        reset_parse_state(state);
-                        return None;
-                    }
-                    let second_unicode_hex_start_offset_utf8: usize = state.offset_utf8;
-                    parse_same_line_while(state, |c| c.is_ascii_hexdigit());
-                    let second_unicode_hex_str: &str =
-                        &state.source[second_unicode_hex_start_offset_utf8..state.offset_utf8];
-                    let _: bool = parse_symbol(state, "}");
-                    let Ok(second_utf16_code) = u16::from_str_radix(second_unicode_hex_str, 16)
-                    else {
-                        reset_parse_state(state);
-                        return None;
-                    };
-                    char::decode_utf16([first_utf16_code, second_utf16_code])
-                        .find_map(Result::ok)
-                        .or_else(|| {
-                            reset_parse_state(state);
-                            None
-                        })
+                    reset_parse_state(state);
+                    None
                 }
             }
         })
