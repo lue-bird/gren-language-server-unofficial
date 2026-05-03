@@ -11030,14 +11030,7 @@ fn gren_syntax_module_format(module_state: &ModuleState) -> String {
             builder.push('\n');
         }
         Some(last_import_node) => {
-            match &gren_syntax_module.documentation {
-                None => {
-                    builder.push_str("\n\n");
-                }
-                Some(_) => {
-                    builder.push('\n');
-                }
-            }
+            builder.push_str("\n\n");
             gren_syntax_module_level_comments(
                 &mut builder,
                 gren_syntax_comments_in_range(
@@ -11128,11 +11121,15 @@ fn gren_syntax_module_documentation_comment_into(
     let mut previous_element_was_at_docs = false;
     for module_documentation_element in module_documentation_elements {
         match &module_documentation_element.value {
-            GrenSyntaxModuleDocumentationElement::Markdown(markdown_node) => {
-                if previous_element_was_at_docs {
+            GrenSyntaxModuleDocumentationElement::Markdown(markdown) => {
+                if previous_element_was_at_docs
+                    && markdown.as_ref() != "\n"
+                    && markdown.as_ref() != "\r\n"
+                {
+                    previous_element_was_at_docs = false;
                     so_far.push('\n');
                 }
-                so_far.push_str(markdown_node);
+                so_far.push_str(markdown);
             }
             GrenSyntaxModuleDocumentationElement::AtDocs(expose_group_names) => {
                 previous_element_was_at_docs = true;
