@@ -37,6 +37,15 @@ Then add a `.vscode/lsp-proxy.json` like
 ]
 ```
 
+### zed/gram-like
+1. clone this repo
+2. open the editor command panel
+3. "zed: install dev extension" or "gram: install extension from folder" and select the cloned-path-gren-language-server-unofficial/zed directory
+
+Optionally for more precise syntax highlighting, add the setting `"semantic_tokens": "combined"` or `"languages": { "gren": { "semantic_tokens": "full" } }`.
+
+Optionally for a file icon in the project panel, open the editor command panel, select `Icon theme selector: toggle` and choose "gren icon dark"/"gren icon light".
+
 ### helix
 write to `~/.config/helix/languages.toml`:
 ```toml

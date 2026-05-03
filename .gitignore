@@ -1,9 +1,24 @@
 target
+*.wasm
+*.obj
+*.o
+*.tar.gz
+*.tgz
+*.zip
+*.jar
 package-lock.json
-gren-stuff
 node_modules
+run.rs
+build/
 .build
 dist
+elm-stuff
+elm.rs
+elmMain.js
+prebuilds/
+node_modules/
+.gren
+gren_packages
 gren.rs
 grenMain.js
 

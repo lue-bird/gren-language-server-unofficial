@@ -1,0 +1,27 @@
+{
+  "$schema": "https://zed.dev/schema/icon_themes/v0.3.0.json",
+  "name": "gren icon",
+  "author": "lue-bird",
+  "themes": [
+    {
+      "name": "gren icon dark",
+      "appearance": "dark",
+      "file_suffixes": {
+        "gren": "gren"
+      },
+      "file_icons": {
+        "gren": { "path": "./icons/file-icon-dark.svg" }
+      }
+    },
+    {
+      "name": "gren icon light",
+      "appearance": "light",
+      "file_suffixes": {
+        "gren": "gren"
+      },
+      "file_icons": {
+        "gren": { "path": "./icons/file-icon-light.svg" }
+      }
+    }
+  ]
+}

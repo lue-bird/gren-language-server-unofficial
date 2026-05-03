@@ -1,0 +1,15 @@
+id = "gren unofficial"
+name = "gren unofficial"
+version = "0.0.1"
+schema_version = 1
+authors = ["lue-bird (lsp)", "Mae Brooks (treesitter)"]
+description = "gren programming language support"
+repository = "https://github.com/lue-bird/gren-language-server-unofficial"
+
+[language_servers.gren-language-server-unofficial]
+name = "gren unofficial LSP"
+languages = ["gren"]
+
+[grammars.gren]
+repository = "https://github.com/MaeBrooks/tree-sitter-gren"
+rev = "main"
