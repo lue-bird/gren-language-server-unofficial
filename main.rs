@@ -12509,7 +12509,41 @@ fn gren_syntax_pattern_find_reference_at_position<'a>(
                 )
             })
         }
-        GrenSyntaxPattern::Record(_) => None,
+        GrenSyntaxPattern::Record(fields) => fields.iter().find_map(|field| match &field.value {
+            Some(field_value_node) => gren_syntax_pattern_find_reference_at_position(
+                scope_expression,
+                gren_syntax_node_as_ref(field_value_node),
+                position,
+            ),
+            None => {
+                if lsp_range_includes_position(field.name.range, position) {
+                    Some(GrenSyntaxNode {
+                        range: field.name.range,
+                        value: GrenSyntaxSymbol::VariableOrVariantOrOperator {
+                            qualification: "",
+                            name: &field.name.value,
+                            local_bindings: vec![(
+                                match scope_expression {
+                                    None => GrenSyntaxNode {
+                                        range: lsp_types::Range::default(),
+                                        value: &GrenSyntaxExpression::Parenthesized(None),
+                                    },
+                                    Some(scope_expression) => scope_expression,
+                                },
+                                vec![GrenLocalBinding {
+                                    name: &field.name.value,
+                                    origin: LocalBindingOrigin::PatternRecordField(
+                                        field.name.range,
+                                    ),
+                                }],
+                            )],
+                        },
+                    })
+                } else {
+                    None
+                }
+            }
+        }),
         GrenSyntaxPattern::String { .. } => None,
         GrenSyntaxPattern::Variable(variable_name) => {
             if lsp_range_includes_position(pattern_node.range, position) {
