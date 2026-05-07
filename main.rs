@@ -674,28 +674,31 @@ fn update_state_on_did_change_text_document(
     };
     for project_state in state.projects.values_mut() {
         if let Some(module_state) = project_state.modules.get_mut(&changed_file_path) {
+            let mut updated_source: String = std::mem::take(&mut module_state.source);
             for change in did_change_text_document.content_changes {
                 match (change.range, change.range_length) {
+                    // means full replacement
                     (None, None) => {
-                        // means full replacement
-                        project_state.modules.insert(
-                            changed_file_path,
-                            initialize_module_state_from_source(change.text),
-                        );
-                        return;
+                        updated_source = change.text;
                     }
+                    // zed for example does not send a range length
+                    (Some(range), None) => {
+                        string_replace_lsp_range(&mut updated_source, range, &change.text);
+                    }
+                    // sending a length is deprecated (sadly) but e.g. vscode still sends it
+                    // which allows us to do a faster string replace
                     (Some(range), Some(range_length)) => {
-                        string_replace_lsp_range(
-                            &mut module_state.source,
+                        string_replace_lsp_range_for_length(
+                            &mut updated_source,
                             range,
                             range_length as usize,
                             &change.text,
                         );
                     }
-                    (None, _) | (_, None) => {}
+                    (None, Some(_)) => {}
                 }
             }
-            module_state.syntax = parse_gren_syntax_module(&module_state.source);
+            *module_state = initialize_module_state_from_source(updated_source);
             break;
         }
     }
@@ -930,8 +933,30 @@ fn parse_gren_make_report(
                 .iter()
                 .map(parse_gren_make_file_compile_error)
                 .collect::<Result<Vec<_>, String>>(),
-            _ => Err("field errors must be array".to_string()),
+            _ => Err("field errors must be an array".to_string()),
         },
+        Some("error") => {
+            let path: &str = json
+                .get("path")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| format!("report file path must be string. Full report: {json}"))?;
+            let title: &str = json
+                .get("title")
+                .and_then(serde_json::Value::as_str)
+                .ok_or_else(|| format!("report title must be string. Full report: {json}"))?;
+            let message: String = json
+                .get("message")
+                .ok_or_else(|| format!("report file message field missing. Full report: {json}"))
+                .and_then(parse_gren_make_message)?;
+            Ok(vec![GrenMakeFileCompileError {
+                path: Box::from(if path.is_empty() { "gren.json" } else { path }),
+                problems: vec![GrenMakeFileInternalCompileProblem {
+                    title: Box::from(title),
+                    range: lsp_types::Range::default(),
+                    message_markdown: message,
+                }],
+            }])
+        }
         Some(unknown_type) => Err(format!("unknown report type \"{unknown_type}\"")),
         None => Err("report type must exist as a string".to_string()),
     }
@@ -961,23 +986,34 @@ fn parse_gren_make_file_internal_compile_problem(
     let title: &str = json
         .get("title")
         .and_then(serde_json::Value::as_str)
-        .ok_or("report file path must be string")?;
+        .ok_or("report title must be string")?;
     let range: lsp_types::Range = json
         .get("region")
         .ok_or_else(|| "report file region must be string".to_string())
         .and_then(parse_gren_make_region_as_lsp_range)?;
-    let message_segments: Vec<GrenMakeMessageSegment> = json
+    let message = json
         .get("message")
-        .and_then(serde_json::Value::as_array)
-        .ok_or_else(|| "report file message must be an array".to_string())?
-        .iter()
-        .map(parse_gren_make_message_segment)
-        .collect::<Result<Vec<GrenMakeMessageSegment>, _>>()?;
+        .ok_or_else(|| "report file message field missing".to_string())
+        .and_then(parse_gren_make_message)?;
     Ok(GrenMakeFileInternalCompileProblem {
         title: Box::from(title),
         range: range,
-        message_markdown: gren_make_message_segments_to_markdown(message_segments),
+        message_markdown: message,
     })
+}
+fn parse_gren_make_message(json: &serde_json::Value) -> Result<String, String> {
+    match serde_json::Value::as_array(json) {
+        Some(message_segments) => Ok(gren_make_message_segments_to_markdown(
+            message_segments
+                .iter()
+                .map(parse_gren_make_message_segment)
+                .collect::<Result<Vec<GrenMakeMessageSegment>, _>>()?,
+        )),
+        None => match serde_json::Value::as_str(json) {
+            Some(message) => Ok(message.to_string()),
+            None => Err("report file message must be an array or a string".to_string()),
+        },
+    }
 }
 fn parse_gren_make_region_as_lsp_range(
     json: &serde_json::Value,
@@ -1170,14 +1206,9 @@ fn initialize_project_modules(
     }
     fully_parsed_modules
 }
-
-fn initialize_state_for_all_projects_into(
-    gren_version: &str,
-    projects_state: &mut std::collections::HashMap<std::path::PathBuf, ProjectState>,
-    project_paths: impl Iterator<Item = std::path::PathBuf>,
-) {
-    let gren_home_path: std::path::PathBuf = match std::env::var("GREN_HOME") {
-        Ok(gren_home_path) => std::path::PathBuf::from(gren_home_path),
+static gren_home_path: std::sync::LazyLock<std::path::PathBuf> = std::sync::LazyLock::new(|| {
+    match std::env::var("GREN_HOME") {
+        Ok(gren_home_variable) => std::path::PathBuf::from(gren_home_variable),
         Err(_) => {
             std::path::Path::join(
                 &std::env::home_dir()
@@ -1195,7 +1226,13 @@ accordingly so that tools like the gren compiler and language server can find th
                 ".cache/gren",
             )
         }
-    };
+    }
+});
+fn initialize_state_for_all_projects_into(
+    gren_version: &str,
+    projects_state: &mut std::collections::HashMap<std::path::PathBuf, ProjectState>,
+    project_paths: impl Iterator<Item = std::path::PathBuf>,
+) {
     let mut all_dependency_exposed_module_names: std::collections::HashMap<
         std::path::PathBuf,
         std::collections::HashMap<Box<str>, ProjectModuleOrigin>,
@@ -1208,16 +1245,20 @@ accordingly so that tools like the gren compiler and language server can find th
             &mut all_dependency_exposed_module_names,
             &mut skipped_dependencies,
             gren_version,
-            &gren_home_path,
             ProjectKind::InWorkspace,
             project_path,
         );
     }
     if !skipped_dependencies.is_empty() {
         eprintln!(
-            "I will skip initializing these dependency {}: {}. \n  \
+            "I will skip initializing {} dependency {}: {}. \n  \
             I can only load packages that you've actively downloaded with `gren install`. \
             If you did and don't care about LSP functionality for indirect dependencies, ignore this message.",
+            if skipped_dependencies.len() == 1 {
+                "this"
+            } else {
+                "these"
+            },
             if skipped_dependencies.len() == 1 {
                 "project"
             } else {
@@ -1240,7 +1281,6 @@ fn initialize_state_for_projects_into(
     >,
     skipped_dependencies: &mut std::collections::HashSet<std::path::PathBuf>,
     gren_version: &str,
-    gren_home_path: &std::path::PathBuf,
     project_kind: ProjectKind,
     project_paths: impl Iterator<Item = std::path::PathBuf>,
 ) -> std::collections::HashMap<Box<str>, ProjectModuleOrigin> {
@@ -1254,7 +1294,6 @@ fn initialize_state_for_projects_into(
             all_dependency_exposed_module_names,
             skipped_dependencies,
             gren_version,
-            gren_home_path,
             project_kind,
             project_path,
         ));
@@ -1269,7 +1308,6 @@ fn initialize_state_for_project_into(
     >,
     skipped_dependencies: &mut std::collections::HashSet<std::path::PathBuf>,
     gren_version: &str,
-    gren_home_path: &std::path::PathBuf,
     project_kind: ProjectKind,
     project_path: std::path::PathBuf,
 ) -> std::collections::HashMap<Box<str>, ProjectModuleOrigin> {
@@ -1330,7 +1368,7 @@ fn initialize_state_for_project_into(
             None => {
                 // https://github.com/gren-lang/compiler/blob/e907d5557065651c11fcc25b207b4b71ca9727d0/src/Git.gren#L144
                 std::path::Path::join(
-                    gren_home_path,
+                    &gren_home_path,
                     format!(
                         "{gren_version}/packages/{}__{}",
                         package_name.replace(['.', '/'], "_"),
@@ -1340,7 +1378,13 @@ fn initialize_state_for_project_into(
             }
             Some(local_path) => {
                 // dependency is local path
-                std::path::Path::join(&project_path, local_path)
+                let project_path_not_canonical = std::path::Path::join(&project_path, local_path);
+                std::path::Path::canonicalize(&project_path_not_canonical).unwrap_or_else(|error| {
+                    eprintln!(
+                        "the dependency {package_name} was set to an invalid local path {error}"
+                    );
+                    project_path_not_canonical
+                })
             }
         }
     };
@@ -1400,7 +1444,6 @@ fn initialize_state_for_project_into(
         all_dependency_exposed_module_names,
         skipped_dependencies,
         gren_version,
-        gren_home_path,
         ProjectKind::Dependency,
         direct_dependency_paths.into_iter(),
     );
@@ -2125,7 +2168,6 @@ fn respond_to_hover(
                 range: Some(hovered_symbol_node.range),
             })
         }
-
         GrenSyntaxSymbol::ImportExpose {
             name: hovered_name,
             origin_module: hovered_expose_origin_module,
@@ -2340,23 +2382,20 @@ fn respond_to_hover(
                 range: Some(hovered_symbol_node.range),
             })
         }
-        GrenSyntaxSymbol::LetDeclarationName {
+        GrenSyntaxSymbol::LocalVariable {
             name: hovered_name,
-            signature_type: maybe_signature_type,
-            start_name_range,
-            scope_expression: _,
+            origin: hovered_origin,
+            scope: _,
+            local_bindings: _,
         } => Some(lsp_types::Hover {
             contents: lsp_types::HoverContents::Markup(lsp_types::MarkupContent {
                 kind: lsp_types::MarkupKind::Markdown,
-                value: let_declaration_info_markdown(
+                value: local_binding_info_markdown(
                     state,
                     hovered_project_module_state.project,
                     &hovered_project_module_state.module.syntax,
-                    GrenSyntaxNode {
-                        range: start_name_range,
-                        value: hovered_name,
-                    },
-                    maybe_signature_type,
+                    hovered_name,
+                    hovered_origin,
                 ),
             }),
             range: Some(hovered_symbol_node.range),
@@ -2364,26 +2403,8 @@ fn respond_to_hover(
         GrenSyntaxSymbol::VariableOrVariantOrOperator {
             qualification: hovered_qualification,
             name: hovered_name,
-            local_bindings,
+            local_bindings: _,
         } => {
-            if hovered_qualification.is_empty()
-                && let Some((hovered_local_binding_origin, _)) =
-                    find_local_binding_scope_expression(&local_bindings, hovered_name)
-            {
-                return Some(lsp_types::Hover {
-                    contents: lsp_types::HoverContents::Markup(lsp_types::MarkupContent {
-                        kind: lsp_types::MarkupKind::Markdown,
-                        value: local_binding_info_markdown(
-                            state,
-                            hovered_project_module_state.project,
-                            &hovered_project_module_state.module.syntax,
-                            hovered_name,
-                            hovered_local_binding_origin,
-                        ),
-                    }),
-                    range: Some(hovered_symbol_node.range),
-                });
-            }
             let hovered_module_origin: &str = look_up_origin_module(
                 &gren_syntax_module_create_origin_lookup(
                     state,
@@ -2790,8 +2811,7 @@ fn respond_to_goto_definition(
                 .position,
         )?;
     match goto_symbol_node.value {
-        GrenSyntaxSymbol::LetDeclarationName { .. }
-        | GrenSyntaxSymbol::ModuleMemberDeclarationName { .. } => {
+        GrenSyntaxSymbol::ModuleMemberDeclarationName { .. } => {
             // already at definition
             None
         }
@@ -3140,32 +3160,33 @@ fn respond_to_goto_definition(
                 },
             ))
         }
+
+        GrenSyntaxSymbol::LocalVariable {
+            name: _,
+            origin: goto_origin,
+            scope: _,
+            local_bindings: _,
+        } => Some(lsp_types::GotoDefinitionResponse::Scalar(
+            lsp_types::Location {
+                uri: goto_definition_arguments
+                    .text_document_position_params
+                    .text_document
+                    .uri,
+                range: match goto_origin {
+                    LocalBindingOrigin::PatternVariable(range)
+                    | LocalBindingOrigin::PatternRecordField(range) => range,
+                    LocalBindingOrigin::LetDeclaredVariable {
+                        signature: _,
+                        start_name_range,
+                    } => start_name_range,
+                },
+            },
+        )),
         GrenSyntaxSymbol::VariableOrVariantOrOperator {
             qualification: goto_qualification,
             name: goto_name,
-            local_bindings,
+            local_bindings: _,
         } => {
-            if goto_qualification.is_empty()
-                && let Some((goto_local_binding_origin, _)) =
-                    find_local_binding_scope_expression(&local_bindings, goto_name)
-            {
-                return Some(lsp_types::GotoDefinitionResponse::Scalar(
-                    lsp_types::Location {
-                        uri: goto_definition_arguments
-                            .text_document_position_params
-                            .text_document
-                            .uri,
-                        range: match goto_local_binding_origin {
-                            LocalBindingOrigin::PatternVariable(range)
-                            | LocalBindingOrigin::PatternRecordField(range) => range,
-                            LocalBindingOrigin::LetDeclaredVariable {
-                                signature: _,
-                                start_name_range,
-                            } => start_name_range,
-                        },
-                    },
-                ));
-            }
             let goto_module_origin: &str = look_up_origin_module(
                 &gren_syntax_module_create_origin_lookup(
                     state,
@@ -3381,12 +3402,6 @@ fn respond_to_prepare_rename(
             declaration: _,
             documentation: _,
         }
-        | GrenSyntaxSymbol::LetDeclarationName {
-            name,
-            signature_type: _,
-            start_name_range: _,
-            scope_expression: _,
-        }
         | GrenSyntaxSymbol::TypeVariable {
             scope_declaration: _,
             name,
@@ -3394,43 +3409,42 @@ fn respond_to_prepare_rename(
             range: prepare_rename_symbol_node.range,
             placeholder: name.to_string(),
         }),
-        GrenSyntaxSymbol::VariableOrVariantOrOperator {
-            qualification,
+        GrenSyntaxSymbol::LocalVariable {
             name,
-            local_bindings,
-        } => {
-            if qualification.is_empty()
-                && let Some((local_binding_origin, _)) =
-                    find_local_binding_scope_expression(&local_bindings, name)
-            {
-                match local_binding_origin {
-                    LocalBindingOrigin::PatternVariable(_)
-                    | LocalBindingOrigin::LetDeclaredVariable { .. } => {
-                        Ok(lsp_types::PrepareRenameResponse::RangeWithPlaceholder {
-                            range: prepare_rename_symbol_node.range,
-                            placeholder: name.to_string(),
-                        })
-                    }
-                    LocalBindingOrigin::PatternRecordField(_) => Err(lsp_server::ResponseError {
-                        code: lsp_server::ErrorCode::RequestFailed as i32,
-                        message: "cannot rename a variable that is bound to a field name"
-                            .to_string(),
-                        data: None,
-                    }),
-                }
-            } else {
+            origin: prepare_rename_origin,
+            scope: _,
+            local_bindings: _,
+        } => match prepare_rename_origin {
+            LocalBindingOrigin::PatternVariable(_)
+            | LocalBindingOrigin::LetDeclaredVariable { .. } => {
                 Ok(lsp_types::PrepareRenameResponse::RangeWithPlaceholder {
-                    range: lsp_types::Range {
-                        start: lsp_position_add_characters(
-                            prepare_rename_symbol_node.range.end,
-                            -(name.len() as i32),
-                        ),
-                        end: prepare_rename_symbol_node.range.end,
-                    },
+                    range: prepare_rename_symbol_node.range,
                     placeholder: name.to_string(),
                 })
             }
-        }
+            LocalBindingOrigin::PatternRecordField(_) => {
+                // TODO consider supporting it (by keeping the old field name but assigning a variable)
+                Err(lsp_server::ResponseError {
+                    code: lsp_server::ErrorCode::RequestFailed as i32,
+                    message: "cannot rename a variable that is bound to a field name".to_string(),
+                    data: None,
+                })
+            }
+        },
+        GrenSyntaxSymbol::VariableOrVariantOrOperator {
+            qualification: _,
+            name,
+            local_bindings: _,
+        } => Ok(lsp_types::PrepareRenameResponse::RangeWithPlaceholder {
+            range: lsp_types::Range {
+                start: lsp_position_add_characters(
+                    prepare_rename_symbol_node.range.end,
+                    -(name.len() as i32),
+                ),
+                end: prepare_rename_symbol_node.range.end,
+            },
+            placeholder: name.to_string(),
+        }),
         GrenSyntaxSymbol::Type {
             qualification: _,
             name,
@@ -3552,6 +3566,66 @@ fn respond_to_rename(
                     .collect::<Vec<_>>(),
             }]
         }
+        GrenSyntaxSymbol::LocalVariable {
+            name: to_rename_name,
+            origin: to_rename_origin,
+            scope: to_rename_maybe_scope_expression,
+            local_bindings,
+        } => {
+            let mut all_uses_of_to_rename: Vec<lsp_types::Range> = Vec::new();
+            if let Some(to_rename_scope_expression) = to_rename_maybe_scope_expression {
+                gren_syntax_expression_uses_of_reference_into(
+                    &mut all_uses_of_to_rename,
+                    &gren_syntax_module_create_origin_lookup(
+                        state,
+                        to_rename_project_module_state.project,
+                        &to_rename_project_module_state.module.syntax,
+                    ),
+                    &local_bindings
+                        .into_iter()
+                        .map(|(_, variable)| variable)
+                        .collect::<Vec<_>>(),
+                    to_rename_scope_expression,
+                    GrenSymbolToReference::LocalBinding {
+                        name: to_rename_name,
+                    },
+                );
+            }
+            match to_rename_origin {
+                LocalBindingOrigin::PatternVariable(range) => {
+                    all_uses_of_to_rename.push(range);
+                }
+                LocalBindingOrigin::PatternRecordField(_) => {
+                    // TODO consider appending " = newName"
+                }
+                LocalBindingOrigin::LetDeclaredVariable {
+                    start_name_range,
+                    signature: maybe_signature,
+                } => {
+                    all_uses_of_to_rename.push(start_name_range);
+                    if let Some(signature) = maybe_signature
+                        && let Some(implementation_name_range) = signature.implementation_name_range
+                    {
+                        all_uses_of_to_rename.push(implementation_name_range);
+                    }
+                }
+            }
+            vec![lsp_types::TextDocumentEdit {
+                text_document: lsp_types::OptionalVersionedTextDocumentIdentifier {
+                    uri: rename_arguments.text_document_position.text_document.uri,
+                    version: None,
+                },
+                edits: all_uses_of_to_rename
+                    .into_iter()
+                    .map(|use_range_of_renamed_module| {
+                        lsp_types::OneOf::Left(lsp_types::TextEdit {
+                            range: use_range_of_renamed_module,
+                            new_text: rename_arguments.new_name.clone(),
+                        })
+                    })
+                    .collect::<Vec<_>>(),
+            }]
+        }
         GrenSyntaxSymbol::ModuleName(module_name_to_rename) => state
             .projects
             .values()
@@ -3586,9 +3660,58 @@ fn respond_to_rename(
         GrenSyntaxSymbol::ModuleMemberDeclarationName {
             name: to_rename_declaration_name,
             documentation: _,
-            declaration: _,
+            declaration: origin_declaration,
+        } => {
+            let to_rename_module_origin: &str = to_rename_project_module_state
+                .module
+                .syntax
+                .header
+                .as_ref()
+                .and_then(|header| header.module_name.as_ref())
+                .map(|node| node.value.as_ref())
+                .unwrap_or("");
+            let symbol_to_rename: GrenSymbolToReference = match origin_declaration.value {
+                GrenSyntaxDeclaration::ChoiceType {
+                    name: maybe_origin_choice_type_name,
+                    ..
+                } => {
+                    if maybe_origin_choice_type_name
+                        .as_ref()
+                        .is_some_and(|choice_type_name_node| {
+                            to_rename_declaration_name == choice_type_name_node.value.as_ref()
+                        })
+                    {
+                        GrenSymbolToReference::Type {
+                            module_origin: to_rename_module_origin,
+                            name: to_rename_declaration_name,
+                            including_declaration_name: true,
+                        }
+                    } else {
+                        GrenSymbolToReference::VariableOrVariant {
+                            module_origin: to_rename_module_origin,
+                            name: to_rename_declaration_name,
+                            including_declaration_name: true,
+                        }
+                    }
+                }
+                GrenSyntaxDeclaration::TypeAlias { .. } => GrenSymbolToReference::Type {
+                    module_origin: to_rename_module_origin,
+                    name: to_rename_declaration_name,
+                    including_declaration_name: true,
+                },
+                GrenSyntaxDeclaration::Variable { .. }
+                | GrenSyntaxDeclaration::Port { .. }
+                | GrenSyntaxDeclaration::Operator { .. } => {
+                    GrenSymbolToReference::VariableOrVariant {
+                        module_origin: to_rename_module_origin,
+                        name: to_rename_declaration_name,
+                        including_declaration_name: true,
+                    }
+                }
+            };
+            renames(state, symbol_to_rename, rename_arguments.new_name)
         }
-        | GrenSyntaxSymbol::ModuleHeaderExpose {
+        GrenSyntaxSymbol::ModuleHeaderExpose {
             name: to_rename_declaration_name,
             all_exposes: _,
         }
@@ -3604,7 +3727,7 @@ fn respond_to_rename(
                 .and_then(|header| header.module_name.as_ref())
                 .map(|node| node.value.as_ref())
                 .unwrap_or("");
-            let gren_declared_symbol_to_rename: GrenSymbolToReference =
+            let symbol_to_rename: GrenSymbolToReference =
                 if to_rename_declaration_name.starts_with(char::is_uppercase) {
                     GrenSymbolToReference::Type {
                         module_origin: to_rename_module_origin,
@@ -3618,42 +3741,14 @@ fn respond_to_rename(
                         including_declaration_name: true,
                     }
                 };
-            state_iter_all_modules(state)
-                .filter_map(move |project_module| {
-                    let mut all_uses_of_at_docs_module_member: Vec<lsp_types::Range> = Vec::new();
-                    gren_syntax_module_uses_of_reference_into(
-                        &mut all_uses_of_at_docs_module_member,
-                        state,
-                        project_module.project_state,
-                        &project_module.module_state.syntax,
-                        gren_declared_symbol_to_rename,
-                    );
-                    let gren_module_uri: lsp_types::Url =
-                        lsp_types::Url::from_file_path(project_module.module_path).ok()?;
-                    Some(lsp_types::TextDocumentEdit {
-                        text_document: lsp_types::OptionalVersionedTextDocumentIdentifier {
-                            uri: gren_module_uri,
-                            version: None,
-                        },
-                        edits: all_uses_of_at_docs_module_member
-                            .into_iter()
-                            .map(|use_range_of_renamed_module| {
-                                lsp_types::OneOf::Left(lsp_types::TextEdit {
-                                    range: use_range_of_renamed_module,
-                                    new_text: rename_arguments.new_name.clone(),
-                                })
-                            })
-                            .collect::<Vec<_>>(),
-                    })
-                })
-                .collect::<Vec<_>>()
+            renames(state, symbol_to_rename, rename_arguments.new_name)
         }
         GrenSyntaxSymbol::ImportExpose {
             origin_module: to_rename_import_expose_origin_module,
             name: to_rename_import_expose_name,
             all_exposes: _,
         } => {
-            let gren_declared_symbol_to_rename: GrenSymbolToReference =
+            let symbol_to_rename: GrenSymbolToReference =
                 if to_rename_import_expose_name.starts_with(char::is_uppercase) {
                     GrenSymbolToReference::Type {
                         module_origin: to_rename_import_expose_origin_module,
@@ -3667,182 +3762,31 @@ fn respond_to_rename(
                         including_declaration_name: true,
                     }
                 };
-            state_iter_all_modules(state)
-                .filter_map(move |project_module| {
-                    let mut all_uses_import_exposed_member: Vec<lsp_types::Range> = Vec::new();
-                    gren_syntax_module_uses_of_reference_into(
-                        &mut all_uses_import_exposed_member,
-                        state,
-                        project_module.project_state,
-                        &project_module.module_state.syntax,
-                        gren_declared_symbol_to_rename,
-                    );
-                    let gren_module_uri: lsp_types::Url =
-                        lsp_types::Url::from_file_path(project_module.module_path).ok()?;
-                    Some(lsp_types::TextDocumentEdit {
-                        text_document: lsp_types::OptionalVersionedTextDocumentIdentifier {
-                            uri: gren_module_uri,
-                            version: None,
-                        },
-                        edits: all_uses_import_exposed_member
-                            .into_iter()
-                            .map(|use_range_of_renamed_module| {
-                                lsp_types::OneOf::Left(lsp_types::TextEdit {
-                                    range: use_range_of_renamed_module,
-                                    new_text: rename_arguments.new_name.clone(),
-                                })
-                            })
-                            .collect::<Vec<_>>(),
-                    })
-                })
-                .collect::<Vec<_>>()
+            renames(state, symbol_to_rename, rename_arguments.new_name)
         }
-        GrenSyntaxSymbol::LetDeclarationName {
+        GrenSyntaxSymbol::VariableOrVariantOrOperator {
+            qualification: to_rename_qualification,
             name: to_rename_name,
-            start_name_range,
-            signature_type: _,
-            scope_expression,
+            local_bindings: _,
         } => {
-            let mut all_uses_of_let_declaration_to_rename: Vec<lsp_types::Range> = Vec::new();
-            gren_syntax_expression_uses_of_reference_into(
-                &mut all_uses_of_let_declaration_to_rename,
+            let to_rename_module_origin: &str = look_up_origin_module(
                 &gren_syntax_module_create_origin_lookup(
                     state,
                     to_rename_project_module_state.project,
                     &to_rename_project_module_state.module.syntax,
                 ),
-                &[GrenLocalBinding {
+                GrenQualified {
+                    qualification: to_rename_qualification,
                     name: to_rename_name,
-                    origin: LocalBindingOrigin::LetDeclaredVariable {
-                        signature: None, // irrelevant fir finding uses
-                        start_name_range: start_name_range,
-                    },
-                }],
-                scope_expression,
-                GrenSymbolToReference::LocalBinding {
-                    name: to_rename_name,
-                    including_let_declaration_name: true,
                 },
             );
-            vec![lsp_types::TextDocumentEdit {
-                text_document: lsp_types::OptionalVersionedTextDocumentIdentifier {
-                    uri: rename_arguments.text_document_position.text_document.uri,
-                    version: None,
-                },
-                edits: all_uses_of_let_declaration_to_rename
-                    .into_iter()
-                    .map(|use_range_of_renamed_module| {
-                        lsp_types::OneOf::Left(lsp_types::TextEdit {
-                            range: use_range_of_renamed_module,
-                            new_text: rename_arguments.new_name.clone(),
-                        })
-                    })
-                    .collect::<Vec<_>>(),
-            }]
-        }
-        GrenSyntaxSymbol::VariableOrVariantOrOperator {
-            qualification: to_rename_qualification,
-            name: to_rename_name,
-            local_bindings,
-        } => {
-            if to_rename_qualification.is_empty()
-                && let Some((
-                    to_rename_local_binding_origin,
-                    local_binding_to_rename_scope_expression,
-                )) = find_local_binding_scope_expression(&local_bindings, to_rename_name)
-            {
-                let mut all_uses_of_local_binding_to_rename: Vec<lsp_types::Range> = Vec::new();
-                gren_syntax_expression_uses_of_reference_into(
-                    &mut all_uses_of_local_binding_to_rename,
-                    &gren_syntax_module_create_origin_lookup(
-                        state,
-                        to_rename_project_module_state.project,
-                        &to_rename_project_module_state.module.syntax,
-                    ),
-                    &[GrenLocalBinding {
-                        name: to_rename_name,
-                        origin: to_rename_local_binding_origin,
-                    }],
-                    local_binding_to_rename_scope_expression,
-                    GrenSymbolToReference::LocalBinding {
-                        name: to_rename_name,
-                        including_let_declaration_name: true,
-                    },
-                );
-                match to_rename_local_binding_origin {
-                    LocalBindingOrigin::PatternVariable(range) => {
-                        all_uses_of_local_binding_to_rename.push(range);
-                    }
-                    LocalBindingOrigin::PatternRecordField(_) => {
-                        // should never have been prepared for rename
-                    }
-                    LocalBindingOrigin::LetDeclaredVariable { .. } => {
-                        // already included in scope expression
-                    }
-                }
-                vec![lsp_types::TextDocumentEdit {
-                    text_document: lsp_types::OptionalVersionedTextDocumentIdentifier {
-                        uri: rename_arguments.text_document_position.text_document.uri,
-                        version: None,
-                    },
-                    edits: all_uses_of_local_binding_to_rename
-                        .into_iter()
-                        .map(|use_range_of_renamed_module| {
-                            lsp_types::OneOf::Left(lsp_types::TextEdit {
-                                range: use_range_of_renamed_module,
-                                new_text: rename_arguments.new_name.clone(),
-                            })
-                        })
-                        .collect::<Vec<_>>(),
-                }]
-            } else {
-                let to_rename_module_origin: &str = look_up_origin_module(
-                    &gren_syntax_module_create_origin_lookup(
-                        state,
-                        to_rename_project_module_state.project,
-                        &to_rename_project_module_state.module.syntax,
-                    ),
-                    GrenQualified {
-                        qualification: to_rename_qualification,
-                        name: to_rename_name,
-                    },
-                );
-                let symbol_to_find: GrenSymbolToReference =
-                    GrenSymbolToReference::VariableOrVariant {
-                        module_origin: to_rename_module_origin,
-                        name: to_rename_name,
-                        including_declaration_name: true,
-                    };
-                state_iter_all_modules(state)
-                    .filter_map(|project_module| {
-                        let mut all_uses_of_renamed_reference: Vec<lsp_types::Range> = Vec::new();
-                        gren_syntax_module_uses_of_reference_into(
-                            &mut all_uses_of_renamed_reference,
-                            state,
-                            project_module.project_state,
-                            &project_module.module_state.syntax,
-                            symbol_to_find,
-                        );
-                        let gren_module_uri: lsp_types::Url =
-                            lsp_types::Url::from_file_path(project_module.module_path).ok()?;
-                        Some(lsp_types::TextDocumentEdit {
-                            text_document: lsp_types::OptionalVersionedTextDocumentIdentifier {
-                                uri: gren_module_uri,
-                                version: None,
-                            },
-                            edits: all_uses_of_renamed_reference
-                                .into_iter()
-                                .map(|use_range_of_renamed_module| {
-                                    lsp_types::OneOf::Left(lsp_types::TextEdit {
-                                        range: use_range_of_renamed_module,
-                                        new_text: rename_arguments.new_name.clone(),
-                                    })
-                                })
-                                .collect::<Vec<_>>(),
-                        })
-                    })
-                    .collect::<Vec<_>>()
-            }
+            let symbol_to_rename: GrenSymbolToReference =
+                GrenSymbolToReference::VariableOrVariant {
+                    module_origin: to_rename_module_origin,
+                    name: to_rename_name,
+                    including_declaration_name: true,
+                };
+            renames(state, symbol_to_rename, rename_arguments.new_name)
         }
         GrenSyntaxSymbol::Type {
             qualification: to_rename_qualification,
@@ -3859,43 +3803,58 @@ fn respond_to_rename(
                     name: type_name_to_rename,
                 },
             );
-            let gren_declared_symbol_to_rename: GrenSymbolToReference =
-                GrenSymbolToReference::Type {
-                    module_origin: to_rename_module_origin,
-                    name: type_name_to_rename,
-                    including_declaration_name: true,
-                };
-            state_iter_all_modules(state)
-                .filter_map(|project_module| {
-                    let mut all_uses_of_renamed_type: Vec<lsp_types::Range> = Vec::new();
-                    gren_syntax_module_uses_of_reference_into(
-                        &mut all_uses_of_renamed_type,
-                        state,
-                        project_module.project_state,
-                        &project_module.module_state.syntax,
-                        gren_declared_symbol_to_rename,
-                    );
-                    let gren_module_uri: lsp_types::Url =
-                        lsp_types::Url::from_file_path(project_module.module_path).ok()?;
-                    Some(lsp_types::TextDocumentEdit {
-                        text_document: lsp_types::OptionalVersionedTextDocumentIdentifier {
-                            uri: gren_module_uri,
-                            version: None,
-                        },
-                        edits: all_uses_of_renamed_type
-                            .into_iter()
-                            .map(|use_range_of_renamed_module| {
-                                lsp_types::OneOf::Left(lsp_types::TextEdit {
-                                    range: use_range_of_renamed_module,
-                                    new_text: rename_arguments.new_name.clone(),
-                                })
-                            })
-                            .collect::<Vec<_>>(),
-                    })
-                })
-                .collect::<Vec<_>>()
+            let symbol_to_rename: GrenSymbolToReference = GrenSymbolToReference::Type {
+                module_origin: to_rename_module_origin,
+                name: type_name_to_rename,
+                including_declaration_name: true,
+            };
+            renames(state, symbol_to_rename, rename_arguments.new_name)
         }
     })
+}
+fn renames(
+    state: &State,
+    symbol: GrenSymbolToReference,
+    new_name: String,
+) -> Vec<lsp_types::TextDocumentEdit> {
+    state_iter_all_modules(state)
+        .filter_map(|project_module| {
+            if project_module
+                .module_path
+                .starts_with(gren_home_path.as_path())
+            {
+                return None;
+            }
+            let mut all_uses: Vec<lsp_types::Range> = Vec::new();
+            gren_syntax_module_uses_of_reference_into(
+                &mut all_uses,
+                state,
+                project_module.project_state,
+                &project_module.module_state.syntax,
+                symbol,
+            );
+            if all_uses.is_empty() {
+                return None;
+            }
+            let gren_module_uri: lsp_types::Url =
+                lsp_types::Url::from_file_path(&project_module.module_path).ok()?;
+            Some(lsp_types::TextDocumentEdit {
+                text_document: lsp_types::OptionalVersionedTextDocumentIdentifier {
+                    uri: gren_module_uri,
+                    version: None,
+                },
+                edits: all_uses
+                    .into_iter()
+                    .map(|use_range_of_renamed_module| {
+                        lsp_types::OneOf::Left(lsp_types::TextEdit {
+                            range: use_range_of_renamed_module,
+                            new_text: new_name.clone(),
+                        })
+                    })
+                    .collect::<Vec<_>>(),
+            })
+        })
+        .collect::<Vec<_>>()
 }
 fn respond_to_references(
     state: &State,
@@ -4219,36 +4178,52 @@ fn respond_to_references(
                 })
                 .collect::<Vec<_>>()
         }
-        GrenSyntaxSymbol::LetDeclarationName {
+        GrenSyntaxSymbol::LocalVariable {
             name: to_find_name,
-            start_name_range,
-            signature_type: _,
-            scope_expression,
+            origin: to_find_origin,
+            scope: to_find_maybe_scope_expression,
+            local_bindings,
         } => {
-            let mut all_uses_of_found_let_declaration: Vec<lsp_types::Range> = Vec::new();
-            gren_syntax_expression_uses_of_reference_into(
-                &mut all_uses_of_found_let_declaration,
-                &gren_syntax_module_create_origin_lookup(
-                    state,
-                    to_find_project_module_state.project,
-                    &to_find_project_module_state.module.syntax,
-                ),
-                &[GrenLocalBinding {
-                    name: to_find_name,
-                    origin: LocalBindingOrigin::LetDeclaredVariable {
-                        signature: None, // irrelevant for finding uses
-                        start_name_range: start_name_range,
-                    },
-                }],
-                scope_expression,
-                GrenSymbolToReference::LocalBinding {
-                    name: to_find_name,
-                    including_let_declaration_name: references_arguments
-                        .context
-                        .include_declaration,
-                },
-            );
-            all_uses_of_found_let_declaration
+            let mut all_uses: Vec<lsp_types::Range> = Vec::new();
+            if let Some(to_find_scope_expression) = to_find_maybe_scope_expression {
+                gren_syntax_expression_uses_of_reference_into(
+                    &mut all_uses,
+                    &gren_syntax_module_create_origin_lookup(
+                        state,
+                        to_find_project_module_state.project,
+                        &to_find_project_module_state.module.syntax,
+                    ),
+                    &local_bindings
+                        .into_iter()
+                        .map(|(_, variable)| variable)
+                        .collect::<Vec<_>>(),
+                    to_find_scope_expression,
+                    GrenSymbolToReference::LocalBinding { name: to_find_name },
+                );
+            }
+            if references_arguments.context.include_declaration {
+                match to_find_origin {
+                    LocalBindingOrigin::PatternVariable(range) => {
+                        all_uses.push(range);
+                    }
+                    LocalBindingOrigin::PatternRecordField(range) => {
+                        all_uses.push(range);
+                    }
+                    LocalBindingOrigin::LetDeclaredVariable {
+                        start_name_range,
+                        signature: maybe_signature,
+                    } => {
+                        all_uses.push(start_name_range);
+                        if let Some(signature) = maybe_signature
+                            && let Some(implementation_name_range) =
+                                signature.implementation_name_range
+                        {
+                            all_uses.push(implementation_name_range);
+                        }
+                    }
+                }
+            }
+            all_uses
                 .into_iter()
                 .map(|use_range_of_found_module| lsp_types::Location {
                     uri: references_arguments
@@ -4263,104 +4238,51 @@ fn respond_to_references(
         GrenSyntaxSymbol::VariableOrVariantOrOperator {
             qualification: to_find_qualification,
             name: to_find_name,
-            local_bindings,
+            local_bindings: _,
         } => {
-            if to_find_qualification.is_empty()
-                && let Some((to_find_local_binding_origin, local_binding_to_find_scope_expression)) =
-                    find_local_binding_scope_expression(&local_bindings, to_find_name)
-            {
-                let mut all_uses_of_found_local_binding: Vec<lsp_types::Range> = Vec::new();
-                gren_syntax_expression_uses_of_reference_into(
-                    &mut all_uses_of_found_local_binding,
-                    &gren_syntax_module_create_origin_lookup(
+            let to_find_module_origin: &str = look_up_origin_module(
+                &gren_syntax_module_create_origin_lookup(
+                    state,
+                    to_find_project_module_state.project,
+                    &to_find_project_module_state.module.syntax,
+                ),
+                GrenQualified {
+                    qualification: to_find_qualification,
+                    name: to_find_name,
+                },
+            );
+            let symbol_to_find: GrenSymbolToReference = GrenSymbolToReference::VariableOrVariant {
+                module_origin: to_find_module_origin,
+                name: to_find_name,
+                including_declaration_name: references_arguments.context.include_declaration,
+            };
+            to_find_project_module_state
+                .project
+                .modules
+                .iter()
+                .flat_map(|(project_module_path, project_module_state)| {
+                    let mut all_uses_of_found_reference: Vec<lsp_types::Range> = Vec::new();
+                    gren_syntax_module_uses_of_reference_into(
+                        &mut all_uses_of_found_reference,
                         state,
                         to_find_project_module_state.project,
-                        &to_find_project_module_state.module.syntax,
-                    ),
-                    &[GrenLocalBinding {
-                        name: to_find_name,
-                        origin: to_find_local_binding_origin,
-                    }],
-                    local_binding_to_find_scope_expression,
-                    GrenSymbolToReference::LocalBinding {
-                        name: to_find_name,
-                        including_let_declaration_name: references_arguments
-                            .context
-                            .include_declaration,
-                    },
-                );
-                if references_arguments.context.include_declaration {
-                    match to_find_local_binding_origin {
-                        LocalBindingOrigin::PatternVariable(range) => {
-                            all_uses_of_found_local_binding.push(range);
-                        }
-                        LocalBindingOrigin::PatternRecordField(range) => {
-                            all_uses_of_found_local_binding.push(range);
-                        }
-                        LocalBindingOrigin::LetDeclaredVariable { .. } => {
-                            // already included in scope
-                        }
-                    }
-                }
-                all_uses_of_found_local_binding
-                    .into_iter()
-                    .map(|use_range_of_found_module| lsp_types::Location {
-                        uri: references_arguments
-                            .text_document_position
-                            .text_document
-                            .uri
-                            .clone(),
-                        range: use_range_of_found_module,
-                    })
-                    .collect::<Vec<_>>()
-            } else {
-                let to_find_module_origin: &str = look_up_origin_module(
-                    &gren_syntax_module_create_origin_lookup(
-                        state,
-                        to_find_project_module_state.project,
-                        &to_find_project_module_state.module.syntax,
-                    ),
-                    GrenQualified {
-                        qualification: to_find_qualification,
-                        name: to_find_name,
-                    },
-                );
-                let symbol_to_find: GrenSymbolToReference =
-                    GrenSymbolToReference::VariableOrVariant {
-                        module_origin: to_find_module_origin,
-                        name: to_find_name,
-                        including_declaration_name: references_arguments
-                            .context
-                            .include_declaration,
-                    };
-                to_find_project_module_state
-                    .project
-                    .modules
-                    .iter()
-                    .flat_map(|(project_module_path, project_module_state)| {
-                        let mut all_uses_of_found_reference: Vec<lsp_types::Range> = Vec::new();
-                        gren_syntax_module_uses_of_reference_into(
-                            &mut all_uses_of_found_reference,
-                            state,
-                            to_find_project_module_state.project,
-                            &project_module_state.syntax,
-                            symbol_to_find,
-                        );
-                        lsp_types::Url::from_file_path(project_module_path)
-                            .ok()
-                            .map(|gren_module_uri| {
-                                all_uses_of_found_reference.into_iter().map(
-                                    move |use_range_of_found_module| lsp_types::Location {
-                                        uri: gren_module_uri.clone(),
-                                        range: use_range_of_found_module,
-                                    },
-                                )
-                            })
-                            .into_iter()
-                            .flatten()
-                    })
-                    .collect::<Vec<_>>()
-            }
+                        &project_module_state.syntax,
+                        symbol_to_find,
+                    );
+                    lsp_types::Url::from_file_path(project_module_path)
+                        .ok()
+                        .map(|gren_module_uri| {
+                            all_uses_of_found_reference.into_iter().map(
+                                move |use_range_of_found_module| lsp_types::Location {
+                                    uri: gren_module_uri.clone(),
+                                    range: use_range_of_found_module,
+                                },
+                            )
+                        })
+                        .into_iter()
+                        .flatten()
+                })
+                .collect::<Vec<_>>()
         }
         GrenSyntaxSymbol::Type {
             qualification: to_find_qualification,
@@ -4770,54 +4692,6 @@ fn respond_to_completion(
                     .and_then(|header| header.module_name.as_ref())
                     .map(|node| node.value.as_ref()),
             ))
-        }
-        GrenSyntaxSymbol::LetDeclarationName {
-            name: _,
-            start_name_range: _,
-            signature_type: _,
-            scope_expression,
-        } => {
-            match scope_expression.value {
-                GrenSyntaxExpression::LetIn {
-                    declarations: let_declarations,
-                    in_keyword_range: _,
-                    result: _,
-                } => {
-                    // find previous signature
-                    let_declarations
-                        .iter()
-                        .zip(let_declarations.iter().skip(1))
-                        .find_map(|(previous_declaration_node, current_declaration_node)| {
-                            if let GrenSyntaxLetDeclaration::VariableDeclaration {
-                                start_name: current_declaration_start_name_node,
-                                signature: None,
-                                ..
-                            } = &current_declaration_node.value
-                                && current_declaration_start_name_node.range
-                                    == symbol_to_complete.range
-                                && let GrenSyntaxLetDeclaration::VariableDeclaration {
-                                    start_name: previous_declaration_start_name_node,
-                                    signature:
-                                        Some(GrenSyntaxVariableDeclarationSignature {
-                                            implementation_name_range: None,
-                                            ..
-                                        }),
-                                    ..
-                                } = &previous_declaration_node.value
-                            {
-                                Some(vec![lsp_types::CompletionItem {
-                                    label: previous_declaration_start_name_node.value.to_string(),
-                                    kind: Some(lsp_types::CompletionItemKind::FUNCTION),
-                                    documentation: None,
-                                    ..lsp_types::CompletionItem::default()
-                                }])
-                            } else {
-                                None
-                            }
-                        })
-                }
-                _ => None,
-            }
         }
         GrenSyntaxSymbol::ModuleMemberDeclarationName { declaration, .. } => {
             match &declaration.value {
@@ -5580,8 +5454,14 @@ fn respond_to_completion(
             }
             Some(completion_items)
         }
-        GrenSyntaxSymbol::VariableOrVariantOrOperator {
-            qualification: to_complete_qualification,
+        GrenSyntaxSymbol::LocalVariable {
+            name: to_complete_name,
+            origin: _,
+            scope: _,
+            local_bindings,
+        }
+        | GrenSyntaxSymbol::VariableOrVariantOrOperator {
+            qualification: "",
             name: to_complete_name,
             local_bindings,
         } => {
@@ -5592,49 +5472,112 @@ fn respond_to_completion(
                 .as_ref()
                 .and_then(|header| header.module_name.as_ref())
                 .map(|node| node.value.as_ref());
-            let full_name_to_complete: String = if to_complete_qualification.is_empty() {
-                to_complete_name.to_string()
-            } else {
-                format!("{to_complete_qualification}.{to_complete_name}")
-            };
+            let full_name_to_complete: String = to_complete_name.to_string();
             let to_complete_module_import_alias_origin_lookup: Vec<GrenImportAliasAndModuleOrigin> =
                 gren_syntax_imports_create_import_alias_origin_lookup(
                     &completion_project_module.module.syntax.imports,
                 );
-            let mut completion_items: Vec<lsp_types::CompletionItem> = Vec::new();
-            if (to_complete_name.is_empty()) || to_complete_name.starts_with(char::is_uppercase) {
-                completion_items.extend(project_module_name_completions_for_except(
-                    state,
-                    completion_project_module.project,
-                    &to_complete_module_import_alias_origin_lookup,
-                    &full_name_to_complete,
-                    maybe_completion_module_name,
-                ));
-            }
-            if to_complete_qualification.is_empty() {
-                let local_binding_completions = local_bindings
-                    .into_iter()
-                    .flat_map(|(_, scope_introduced_bindings)| {
-                        scope_introduced_bindings.into_iter()
-                    })
-                    .map(|local_binding| lsp_types::CompletionItem {
-                        label: local_binding.name.to_string(),
-                        kind: Some(lsp_types::CompletionItemKind::VARIABLE),
-                        documentation: Some(lsp_types::Documentation::MarkupContent(
-                            lsp_types::MarkupContent {
-                                kind: lsp_types::MarkupKind::Markdown,
-                                value: local_binding_info_markdown(
-                                    state,
-                                    completion_project_module.project,
-                                    &completion_project_module.module.syntax,
-                                    local_binding.name,
-                                    local_binding.origin,
-                                ),
+            // for local variable origins (pattern variables, punned fields, let declaration names), do not suggest anything in half let declarations
+            if let Some((origin, maybe_scope_expression)) =
+                find_local_binding_scope_expression(&local_bindings, to_complete_name)
+                && (match origin {
+                    LocalBindingOrigin::PatternVariable(range) => symbol_to_complete.range == range,
+                    LocalBindingOrigin::PatternRecordField(range) => {
+                        symbol_to_complete.range == range
+                    }
+                    LocalBindingOrigin::LetDeclaredVariable {
+                        signature: maybe_signature,
+                        start_name_range,
+                    } => {
+                        symbol_to_complete.range == start_name_range
+                            || maybe_signature
+                                .as_ref()
+                                .and_then(|sig| sig.implementation_name_range)
+                                .is_none_or(|implementation_name_range| {
+                                    implementation_name_range == symbol_to_complete.range
+                                })
+                    }
+                })
+            {
+                if let LocalBindingOrigin::LetDeclaredVariable { .. } = origin
+                    && let Some(GrenSyntaxNode {
+                        range: _,
+                        value:
+                            GrenSyntaxExpression::LetIn {
+                                declarations: let_declarations,
+                                in_keyword_range: _,
+                                result: _,
                             },
-                        )),
-                        ..lsp_types::CompletionItem::default()
-                    });
-                completion_items.extend(local_binding_completions);
+                    }) = maybe_scope_expression
+                {
+                    // find previous signature
+                    let_declarations
+                        .iter()
+                        .zip(let_declarations.iter().skip(1))
+                        .find_map(|(previous_declaration_node, current_declaration_node)| {
+                            if let GrenSyntaxLetDeclaration::VariableDeclaration {
+                                start_name: current_declaration_start_name_node,
+                                signature: None,
+                                ..
+                            } = &current_declaration_node.value
+                                && current_declaration_start_name_node.range
+                                    == symbol_to_complete.range
+                                && let GrenSyntaxLetDeclaration::VariableDeclaration {
+                                    start_name: previous_declaration_start_name_node,
+                                    signature:
+                                        Some(GrenSyntaxVariableDeclarationSignature {
+                                            implementation_name_range: None,
+                                            ..
+                                        }),
+                                    ..
+                                } = &previous_declaration_node.value
+                            {
+                                Some(vec![lsp_types::CompletionItem {
+                                    label: previous_declaration_start_name_node.value.to_string(),
+                                    kind: Some(lsp_types::CompletionItemKind::FUNCTION),
+                                    documentation: None,
+                                    ..lsp_types::CompletionItem::default()
+                                }])
+                            } else {
+                                None
+                            }
+                        })
+                } else {
+                    None
+                }
+            } else {
+                let mut completion_items: Vec<lsp_types::CompletionItem> = Vec::new();
+                if to_complete_name.starts_with(char::is_uppercase) {
+                    completion_items.extend(project_module_name_completions_for_except(
+                        state,
+                        completion_project_module.project,
+                        &to_complete_module_import_alias_origin_lookup,
+                        &full_name_to_complete,
+                        maybe_completion_module_name,
+                    ));
+                } else {
+                    let local_binding_completions =
+                        local_bindings.into_iter().map(|(_, local_binding)| {
+                            lsp_types::CompletionItem {
+                                label: local_binding.name.to_string(),
+                                kind: Some(lsp_types::CompletionItemKind::VARIABLE),
+                                documentation: Some(lsp_types::Documentation::MarkupContent(
+                                    lsp_types::MarkupContent {
+                                        kind: lsp_types::MarkupKind::Markdown,
+                                        value: local_binding_info_markdown(
+                                            state,
+                                            completion_project_module.project,
+                                            &completion_project_module.module.syntax,
+                                            local_binding.name,
+                                            local_binding.origin,
+                                        ),
+                                    },
+                                )),
+                                ..lsp_types::CompletionItem::default()
+                            }
+                        });
+                    completion_items.extend(local_binding_completions);
+                }
                 variable_declaration_completions_into(
                     state,
                     completion_project_module.project,
@@ -5676,33 +5619,61 @@ fn respond_to_completion(
                         );
                     }
                 }
+                Some(completion_items)
             }
-            if !to_complete_qualification.is_empty() {
-                let to_complete_module_origins: Vec<&str> = look_up_import_alias_module_origins(
+        }
+        GrenSyntaxSymbol::VariableOrVariantOrOperator {
+            qualification: to_complete_qualification,
+            name: to_complete_name,
+            local_bindings: _,
+        } => {
+            let maybe_completion_module_name: Option<&str> = completion_project_module
+                .module
+                .syntax
+                .header
+                .as_ref()
+                .and_then(|header| header.module_name.as_ref())
+                .map(|node| node.value.as_ref());
+            let full_name_to_complete: String =
+                format!("{to_complete_qualification}.{to_complete_name}");
+            let to_complete_module_import_alias_origin_lookup: Vec<GrenImportAliasAndModuleOrigin> =
+                gren_syntax_imports_create_import_alias_origin_lookup(
+                    &completion_project_module.module.syntax.imports,
+                );
+            let mut completion_items: Vec<lsp_types::CompletionItem> = Vec::new();
+            if (to_complete_name.is_empty()) || to_complete_name.starts_with(char::is_uppercase) {
+                completion_items.extend(project_module_name_completions_for_except(
+                    state,
+                    completion_project_module.project,
                     &to_complete_module_import_alias_origin_lookup,
-                    to_complete_qualification,
-                )
-                .unwrap_or_else(|| vec![to_complete_qualification]);
-                for to_complete_module_origin in to_complete_module_origins {
-                    if let Some((_, to_complete_origin_module_state)) =
-                        project_state_get_module_with_name(
-                            state,
-                            completion_project_module.project,
-                            to_complete_module_origin,
-                        )
-                    {
-                        let origin_module_expose_set: GrenExposeSet =
-                            gren_syntax_module_header_expose_set(
-                                to_complete_origin_module_state.syntax.header.as_ref(),
-                            );
-                        variable_declaration_completions_into(
-                            state,
-                            completion_project_module.project,
-                            &to_complete_origin_module_state.syntax,
-                            &mut completion_items,
-                            &origin_module_expose_set,
+                    &full_name_to_complete,
+                    maybe_completion_module_name,
+                ));
+            }
+            let to_complete_module_origins: Vec<&str> = look_up_import_alias_module_origins(
+                &to_complete_module_import_alias_origin_lookup,
+                to_complete_qualification,
+            )
+            .unwrap_or_else(|| vec![to_complete_qualification]);
+            for to_complete_module_origin in to_complete_module_origins {
+                if let Some((_, to_complete_origin_module_state)) =
+                    project_state_get_module_with_name(
+                        state,
+                        completion_project_module.project,
+                        to_complete_module_origin,
+                    )
+                {
+                    let origin_module_expose_set: GrenExposeSet =
+                        gren_syntax_module_header_expose_set(
+                            to_complete_origin_module_state.syntax.header.as_ref(),
                         );
-                    }
+                    variable_declaration_completions_into(
+                        state,
+                        completion_project_module.project,
+                        &to_complete_origin_module_state.syntax,
+                        &mut completion_items,
+                        &origin_module_expose_set,
+                    );
                 }
             }
             Some(completion_items)
@@ -6112,7 +6083,20 @@ fn respond_to_document_formatting(
                 character: 0,
             },
             end: lsp_types::Position {
-                line: 1_000_000_000, // to_format_project_module.module.source.lines().count() as u32 + 1
+                line: to_format_project_module.module.source.lines().count() as u32
+                    + (
+                        // restore last line break potentially eaten by .lines()
+                        if to_format_project_module
+                            .module
+                            .source
+                            .ends_with(['\r', '\n'])
+                        {
+                            1
+                        } else {
+                            0
+                        }
+                    )
+                    + 1,
                 character: 0,
             },
         },
@@ -6358,8 +6342,8 @@ fn respond_to_code_action(
         GrenSyntaxSymbol::ModuleDocumentationAtDocsMember { .. } => None,
         GrenSyntaxSymbol::ModuleMemberDeclarationName { .. } => None,
         GrenSyntaxSymbol::ImportExpose { .. } => None,
-        GrenSyntaxSymbol::LetDeclarationName { .. } => None,
         GrenSyntaxSymbol::TypeVariable { .. } => None,
+        GrenSyntaxSymbol::LocalVariable { .. } => None,
         GrenSyntaxSymbol::VariableOrVariantOrOperator {
             qualification,
             name: _,
@@ -9935,7 +9919,7 @@ fn gren_syntax_expression_not_parenthesized_into(
                         so_far.push_str("[]");
                     } else {
                         so_far.push('[');
-                        gren_syntax_comments_into(so_far, indent + 1, comments);
+                        gren_syntax_comments_into(so_far, indent + 2, comments);
                         linebreak_indented_into(so_far, indent);
                         so_far.push(']');
                     }
@@ -11911,16 +11895,12 @@ enum GrenSyntaxSymbol<'a> {
         name: &'a str,
         all_exposes: &'a [GrenSyntaxNode<GrenSyntaxExpose>],
     },
-    LetDeclarationName {
+    LocalVariable {
         name: &'a str,
-        start_name_range: lsp_types::Range,
-        signature_type: Option<GrenSyntaxNode<&'a GrenSyntaxType>>,
-        scope_expression: GrenSyntaxNode<&'a GrenSyntaxExpression>,
+        origin: LocalBindingOrigin<'a>,
+        scope: Option<GrenSyntaxNode<&'a GrenSyntaxExpression>>,
+        local_bindings: GrenLocalBindings<'a>,
     },
-
-    // TODO use better representation of VariableOrVariantOrOperator:
-    // add LocalVariable { origin, scope : Option<Node<Expression>> }
-    // and remove `local_bindings` from VariableOrVariantOrOperator
     VariableOrVariantOrOperator {
         qualification: &'a str,
         name: &'a str,
@@ -11936,26 +11916,24 @@ enum GrenSyntaxSymbol<'a> {
     },
 }
 type GrenLocalBindings<'a> = Vec<(
-    GrenSyntaxNode<&'a GrenSyntaxExpression>,
-    Vec<GrenLocalBinding<'a>>,
+    Option<GrenSyntaxNode<&'a GrenSyntaxExpression>>,
+    GrenLocalBinding<'a>,
 )>;
 fn find_local_binding_scope_expression<'a>(
     local_bindings: &GrenLocalBindings<'a>,
     to_find: &str,
 ) -> Option<(
     LocalBindingOrigin<'a>,
-    GrenSyntaxNode<&'a GrenSyntaxExpression>,
+    Option<GrenSyntaxNode<&'a GrenSyntaxExpression>>,
 )> {
     local_bindings
         .iter()
-        .find_map(|(scope_expression, local_bindings)| {
-            local_bindings.iter().find_map(|local_binding| {
-                if local_binding.name == to_find {
-                    Some((local_binding.origin, *scope_expression))
-                } else {
-                    None
-                }
-            })
+        .find_map(|(maybe_scope_expression, local_binding)| {
+            if local_binding.name == to_find {
+                Some((local_binding.origin, *maybe_scope_expression))
+            } else {
+                None
+            }
         })
 }
 
@@ -11967,7 +11945,7 @@ fn gren_syntax_module_find_symbol_at_position<'a>(
         .header
         .as_ref()
         .and_then(|module_header| {
-            gren_syntax_module_header_find_reference_at_position(module_header, position)
+            gren_syntax_module_header_find_symbol_at_position(module_header, position)
         })
         .or_else(|| {
             gren_syntax_module
@@ -11982,7 +11960,7 @@ fn gren_syntax_module_find_symbol_at_position<'a>(
         })
         .or_else(|| {
             gren_syntax_module.imports.iter().find_map(|import_node| {
-                gren_syntax_import_find_reference_at_position(
+                gren_syntax_import_find_symbol_at_position(
                     gren_syntax_node_as_ref(import_node),
                     position,
                 )
@@ -11995,7 +11973,7 @@ fn gren_syntax_module_find_symbol_at_position<'a>(
                 .filter_map(|declaration_or_err| declaration_or_err.as_ref().ok())
                 .find_map(|documented_declaration| {
                     let declaration_node = documented_declaration.declaration.as_ref()?;
-                    gren_syntax_declaration_find_reference_at_position(
+                    gren_syntax_declaration_find_symbol_at_position(
                         gren_syntax_node_as_ref(declaration_node),
                         documented_declaration
                             .documentation
@@ -12042,7 +12020,7 @@ fn gren_syntax_module_documentation_find_symbol_at_position<'a>(
             }
         })
 }
-fn gren_syntax_module_header_find_reference_at_position<'a>(
+fn gren_syntax_module_header_find_symbol_at_position<'a>(
     gren_syntax_module_header: &'a GrenSyntaxModuleHeader,
     position: lsp_types::Position,
 ) -> Option<GrenSyntaxNode<GrenSyntaxSymbol<'a>>> {
@@ -12056,14 +12034,14 @@ fn gren_syntax_module_header_find_reference_at_position<'a>(
     } else {
         let exposing_node: &GrenSyntaxNode<GrenSyntaxExposing> =
             gren_syntax_module_header.exposing.as_ref()?;
-        gren_syntax_module_header_exposing_from_module_find_reference_at_position(
+        gren_syntax_module_header_exposing_from_module_find_symbol_at_position(
             gren_syntax_node_as_ref(exposing_node),
             position,
         )
     }
 }
 
-fn gren_syntax_import_find_reference_at_position<'a>(
+fn gren_syntax_import_find_symbol_at_position<'a>(
     gren_syntax_import_node: GrenSyntaxNode<&'a GrenSyntaxImport>,
     position: lsp_types::Position,
 ) -> Option<GrenSyntaxNode<GrenSyntaxSymbol<'a>>> {
@@ -12092,7 +12070,7 @@ fn gren_syntax_import_find_reference_at_position<'a>(
             .exposing
             .as_ref()
             .and_then(|exposing| {
-                gren_syntax_import_exposing_from_module_find_reference_at_position(
+                gren_syntax_import_exposing_from_module_find_symbol_at_position(
                     &module_name_node.value,
                     gren_syntax_node_as_ref(exposing),
                     position,
@@ -12101,7 +12079,7 @@ fn gren_syntax_import_find_reference_at_position<'a>(
     }
 }
 
-fn gren_syntax_module_header_exposing_from_module_find_reference_at_position<'a>(
+fn gren_syntax_module_header_exposing_from_module_find_symbol_at_position<'a>(
     gren_syntax_exposing_node: GrenSyntaxNode<&'a GrenSyntaxExposing>,
     position: lsp_types::Position,
 ) -> Option<GrenSyntaxNode<GrenSyntaxSymbol<'a>>> {
@@ -12136,7 +12114,7 @@ fn gren_syntax_module_header_exposing_from_module_find_reference_at_position<'a>
         }),
     }
 }
-fn gren_syntax_import_exposing_from_module_find_reference_at_position<'a>(
+fn gren_syntax_import_exposing_from_module_find_symbol_at_position<'a>(
     import_origin_module: &'a str,
     gren_syntax_exposing_node: GrenSyntaxNode<&'a GrenSyntaxExposing>,
     position: lsp_types::Position,
@@ -12174,7 +12152,7 @@ fn gren_syntax_import_exposing_from_module_find_reference_at_position<'a>(
     }
 }
 
-fn gren_syntax_declaration_find_reference_at_position<'a>(
+fn gren_syntax_declaration_find_symbol_at_position<'a>(
     gren_syntax_declaration_node: GrenSyntaxNode<&'a GrenSyntaxDeclaration>,
     maybe_documentation: Option<&'a str>,
     position: lsp_types::Position,
@@ -12231,7 +12209,7 @@ fn gren_syntax_declaration_find_reference_at_position<'a>(
                         })
                         .or_else(|| {
                             variant0_maybe_value.as_ref().and_then(|variant_value| {
-                                gren_syntax_type_find_reference_at_position(
+                                gren_syntax_type_find_symbol_at_position(
                                     gren_syntax_declaration_node.value,
                                     gren_syntax_node_as_ref(variant_value),
                                     position,
@@ -12256,7 +12234,7 @@ fn gren_syntax_declaration_find_reference_at_position<'a>(
                                     })
                                 } else {
                                     variant.value.as_ref().and_then(|variant_value| {
-                                        gren_syntax_type_find_reference_at_position(
+                                        gren_syntax_type_find_symbol_at_position(
                                             gren_syntax_declaration_node.value,
                                             gren_syntax_node_as_ref(variant_value),
                                             position,
@@ -12318,7 +12296,7 @@ fn gren_syntax_declaration_find_reference_at_position<'a>(
                     })
                 } else {
                     maybe_type.as_ref().and_then(|type_node| {
-                        gren_syntax_type_find_reference_at_position(
+                        gren_syntax_type_find_symbol_at_position(
                             gren_syntax_declaration_node.value,
                             gren_syntax_node_as_ref(type_node),
                             position,
@@ -12362,7 +12340,7 @@ fn gren_syntax_declaration_find_reference_at_position<'a>(
                         })
                         .or_else(|| {
                             maybe_type.as_ref().and_then(|type_node| {
-                                gren_syntax_type_find_reference_at_position(
+                                gren_syntax_type_find_symbol_at_position(
                                     gren_syntax_declaration_node.value,
                                     gren_syntax_node_as_ref(type_node),
                                     position,
@@ -12388,187 +12366,163 @@ fn gren_syntax_declaration_find_reference_at_position<'a>(
                         range: start_name_node.range,
                     })
                 } else {
-                    maybe_signature
-                        .as_ref()
-                        .and_then(|signature: &GrenSyntaxVariableDeclarationSignature| {
-                            if let Some(implementation_name_range) =
-                                signature.implementation_name_range
-                                && lsp_range_includes_position(implementation_name_range, position)
-                            {
-                                Some(GrenSyntaxNode {
-                                    value: GrenSyntaxSymbol::ModuleMemberDeclarationName {
-                                        name: &start_name_node.value,
-                                        declaration: gren_syntax_declaration_node,
-                                        documentation: maybe_documentation,
-                                    },
-                                    range: start_name_node.range,
-                                })
-                            } else {
-                                signature.type_.as_ref().and_then(|signature_type_node| {
-                                    gren_syntax_type_find_reference_at_position(
-                                        gren_syntax_declaration_node.value,
-                                        gren_syntax_node_as_ref(signature_type_node),
+                    if let Some(signature) = maybe_signature {
+                        if let Some(implementation_name_range) = signature.implementation_name_range
+                            && lsp_range_includes_position(implementation_name_range, position)
+                        {
+                            return Some(GrenSyntaxNode {
+                                value: GrenSyntaxSymbol::ModuleMemberDeclarationName {
+                                    name: &start_name_node.value,
+                                    declaration: gren_syntax_declaration_node,
+                                    documentation: maybe_documentation,
+                                },
+                                range: start_name_node.range,
+                            });
+                        }
+                        if let Some(found_symbol) =
+                            signature.type_.as_ref().and_then(|signature_type_node| {
+                                gren_syntax_type_find_symbol_at_position(
+                                    gren_syntax_declaration_node.value,
+                                    gren_syntax_node_as_ref(signature_type_node),
+                                    position,
+                                )
+                            })
+                        {
+                            return Some(found_symbol);
+                        }
+                    }
+                    let mut local_bindings = Vec::new();
+                    for parameter_node in parameters {
+                        gren_syntax_pattern_bindings_for_scope_into(
+                            &mut local_bindings,
+                            maybe_result.as_ref().map(gren_syntax_node_as_ref),
+                            gren_syntax_node_as_ref(parameter_node),
+                        );
+                    }
+                    let result_or_local_bindings = match maybe_result {
+                        None => std::ops::ControlFlow::Continue(local_bindings),
+                        Some(result_node) => gren_syntax_expression_find_symbol_at_position(
+                            local_bindings,
+                            gren_syntax_declaration_node.value,
+                            gren_syntax_node_as_ref(result_node),
+                            position,
+                        ),
+                    };
+                    match result_or_local_bindings {
+                        std::ops::ControlFlow::Break(result) => Some(result),
+                        std::ops::ControlFlow::Continue(local_bindings) => parameters
+                            .iter()
+                            .try_fold(
+                                local_bindings,
+                                |parameter_introduced_bindings, parameter| {
+                                    gren_syntax_pattern_find_symbol_at_position(
+                                        maybe_result.as_ref().map(gren_syntax_node_as_ref),
+                                        parameter_introduced_bindings,
+                                        gren_syntax_node_as_ref(parameter),
                                         position,
                                     )
-                                })
-                            }
-                        })
-                        .or_else(|| {
-                            let mut parameter_introduced_bindings: Vec<GrenLocalBinding> =
-                                Vec::new();
-                            for parameter_node in parameters {
-                                gren_syntax_pattern_bindings_into(
-                                    &mut parameter_introduced_bindings,
-                                    gren_syntax_node_as_ref(parameter_node),
-                                );
-                            }
-                            maybe_result.as_ref().and_then(|result_node| {
-                                gren_syntax_expression_find_reference_at_position(
-                                    vec![(
-                                        gren_syntax_node_as_ref(result_node),
-                                        parameter_introduced_bindings,
-                                    )],
-                                    gren_syntax_declaration_node.value,
-                                    gren_syntax_node_as_ref(result_node),
-                                    position,
-                                )
-                                .break_value()
-                            })
-                        })
-                        .or_else(|| {
-                            parameters.iter().find_map(|parameter| {
-                                gren_syntax_pattern_find_reference_at_position(
-                                    maybe_result.as_ref().map(gren_syntax_node_as_ref),
-                                    gren_syntax_node_as_ref(parameter),
-                                    position,
-                                )
-                            })
-                        })
+                                },
+                            )
+                            .break_value(),
+                    }
                 }
             }
         }
     }
 }
 
-fn gren_syntax_pattern_find_reference_at_position<'a>(
+fn gren_syntax_pattern_find_symbol_at_position<'a>(
     scope_expression: Option<GrenSyntaxNode<&'a GrenSyntaxExpression>>,
+    mut local_bindings: GrenLocalBindings<'a>,
     pattern_node: GrenSyntaxNode<&'a GrenSyntaxPattern>,
     position: lsp_types::Position,
-) -> Option<GrenSyntaxNode<GrenSyntaxSymbol<'a>>> {
+) -> std::ops::ControlFlow<GrenSyntaxNode<GrenSyntaxSymbol<'a>>, GrenLocalBindings<'a>> {
     match pattern_node.value {
         GrenSyntaxPattern::As {
             pattern,
             as_keyword_range: _,
             variable: maybe_variable,
-        } => maybe_variable
-            .as_ref()
-            .and_then(|variable_node| {
-                if lsp_range_includes_position(variable_node.range, position) {
-                    Some(GrenSyntaxNode {
-                        range: variable_node.range,
-                        value: GrenSyntaxSymbol::VariableOrVariantOrOperator {
-                            qualification: "",
-                            name: &variable_node.value,
-                            local_bindings: vec![(
-                                match scope_expression {
-                                    None => GrenSyntaxNode {
-                                        range: lsp_types::Range::default(),
-                                        value: &GrenSyntaxExpression::Parenthesized(None),
-                                    },
-                                    Some(scope_expression) => scope_expression,
-                                },
-                                vec![GrenLocalBinding {
-                                    name: &variable_node.value,
-                                    origin: LocalBindingOrigin::PatternVariable(
-                                        variable_node.range,
-                                    ),
-                                }],
-                            )],
-                        },
-                    })
-                } else {
-                    None
+        } => {
+            local_bindings = match maybe_variable {
+                None => std::ops::ControlFlow::Continue(local_bindings),
+                Some(variable_node) => {
+                    if lsp_range_includes_position(variable_node.range, position) {
+                        std::ops::ControlFlow::Break(GrenSyntaxNode {
+                            range: variable_node.range,
+                            value: GrenSyntaxSymbol::LocalVariable {
+                                name: &variable_node.value,
+                                scope: scope_expression,
+                                origin: LocalBindingOrigin::PatternVariable(variable_node.range),
+                                local_bindings: local_bindings,
+                            },
+                        })
+                    } else {
+                        std::ops::ControlFlow::Continue(local_bindings)
+                    }
                 }
-            })
-            .or_else(|| {
-                gren_syntax_pattern_find_reference_at_position(
-                    scope_expression,
-                    gren_syntax_node_unbox(pattern),
-                    position,
-                )
-            }),
-        GrenSyntaxPattern::Char(_) => None,
-        GrenSyntaxPattern::Ignored(_) => None,
-        GrenSyntaxPattern::Int { .. } => None,
-        GrenSyntaxPattern::Parenthesized(maybe_in_parens) => {
-            maybe_in_parens.as_ref().and_then(|in_parens| {
-                gren_syntax_pattern_find_reference_at_position(
-                    scope_expression,
-                    gren_syntax_node_unbox(in_parens),
-                    position,
-                )
-            })
-        }
-        GrenSyntaxPattern::Record(fields) => fields.iter().find_map(|field| match &field.value {
-            Some(field_value_node) => gren_syntax_pattern_find_reference_at_position(
+            }?;
+            gren_syntax_pattern_find_symbol_at_position(
                 scope_expression,
-                gren_syntax_node_as_ref(field_value_node),
+                local_bindings,
+                gren_syntax_node_unbox(pattern),
+                position,
+            )
+        }
+        GrenSyntaxPattern::Char(_) => std::ops::ControlFlow::Continue(local_bindings),
+        GrenSyntaxPattern::Ignored(_) => std::ops::ControlFlow::Continue(local_bindings),
+        GrenSyntaxPattern::Int { .. } => std::ops::ControlFlow::Continue(local_bindings),
+        GrenSyntaxPattern::Parenthesized(maybe_in_parens) => match maybe_in_parens {
+            Some(in_parens) => gren_syntax_pattern_find_symbol_at_position(
+                scope_expression,
+                local_bindings,
+                gren_syntax_node_unbox(in_parens),
                 position,
             ),
-            None => {
-                if lsp_range_includes_position(field.name.range, position) {
-                    Some(GrenSyntaxNode {
-                        range: field.name.range,
-                        value: GrenSyntaxSymbol::VariableOrVariantOrOperator {
-                            qualification: "",
-                            name: &field.name.value,
-                            local_bindings: vec![(
-                                match scope_expression {
-                                    None => GrenSyntaxNode {
-                                        range: lsp_types::Range::default(),
-                                        value: &GrenSyntaxExpression::Parenthesized(None),
-                                    },
-                                    Some(scope_expression) => scope_expression,
-                                },
-                                vec![GrenLocalBinding {
+            None => std::ops::ControlFlow::Continue(local_bindings),
+        },
+        GrenSyntaxPattern::Record(fields) => {
+            fields
+                .iter()
+                .try_fold(local_bindings, |local_bindings, field| match &field.value {
+                    Some(field_value_node) => gren_syntax_pattern_find_symbol_at_position(
+                        scope_expression,
+                        local_bindings,
+                        gren_syntax_node_as_ref(field_value_node),
+                        position,
+                    ),
+                    None => {
+                        if lsp_range_includes_position(field.name.range, position) {
+                            std::ops::ControlFlow::Break(GrenSyntaxNode {
+                                range: field.name.range,
+                                value: GrenSyntaxSymbol::LocalVariable {
                                     name: &field.name.value,
                                     origin: LocalBindingOrigin::PatternRecordField(
                                         field.name.range,
                                     ),
-                                }],
-                            )],
-                        },
-                    })
-                } else {
-                    None
-                }
-            }
-        }),
-        GrenSyntaxPattern::String { .. } => None,
+                                    scope: scope_expression,
+                                    local_bindings: local_bindings,
+                                },
+                            })
+                        } else {
+                            std::ops::ControlFlow::Continue(local_bindings)
+                        }
+                    }
+                })
+        }
+        GrenSyntaxPattern::String { .. } => std::ops::ControlFlow::Continue(local_bindings),
         GrenSyntaxPattern::Variable(variable_name) => {
             if lsp_range_includes_position(pattern_node.range, position) {
-                Some(GrenSyntaxNode {
+                std::ops::ControlFlow::Break(GrenSyntaxNode {
                     range: pattern_node.range,
-                    value: GrenSyntaxSymbol::VariableOrVariantOrOperator {
-                        qualification: "",
+                    value: GrenSyntaxSymbol::LocalVariable {
                         name: variable_name,
-                        local_bindings: vec![(
-                            match scope_expression {
-                                None => GrenSyntaxNode {
-                                    range: lsp_types::Range::default(),
-                                    value: &GrenSyntaxExpression::Parenthesized(None),
-                                },
-                                Some(scope_expression) => scope_expression,
-                            },
-                            vec![GrenLocalBinding {
-                                name: variable_name,
-                                origin: LocalBindingOrigin::PatternVariable(pattern_node.range),
-                            }],
-                        )],
+                        origin: LocalBindingOrigin::PatternVariable(pattern_node.range),
+                        scope: scope_expression,
+                        local_bindings: local_bindings,
                     },
                 })
             } else {
-                None
+                std::ops::ControlFlow::Continue(local_bindings)
             }
         }
         GrenSyntaxPattern::Variant {
@@ -12576,7 +12530,7 @@ fn gren_syntax_pattern_find_reference_at_position<'a>(
             value: maybe_value,
         } => {
             if lsp_range_includes_position(reference.range, position) {
-                Some(GrenSyntaxNode {
+                std::ops::ControlFlow::Break(GrenSyntaxNode {
                     value: GrenSyntaxSymbol::VariableOrVariantOrOperator {
                         qualification: &reference.value.qualification,
                         name: &reference.value.name,
@@ -12585,26 +12539,33 @@ fn gren_syntax_pattern_find_reference_at_position<'a>(
                     range: reference.range,
                 })
             } else {
-                maybe_value.as_ref().and_then(|value| {
-                    gren_syntax_pattern_find_reference_at_position(
+                match maybe_value {
+                    Some(value) => gren_syntax_pattern_find_symbol_at_position(
                         scope_expression,
+                        local_bindings,
                         gren_syntax_node_unbox(value),
+                        position,
+                    ),
+                    None => std::ops::ControlFlow::Continue(local_bindings),
+                }
+            }
+        }
+        GrenSyntaxPattern::ArrayExact(elements) => {
+            elements
+                .iter()
+                .try_fold(local_bindings, |local_bindings, element| {
+                    gren_syntax_pattern_find_symbol_at_position(
+                        scope_expression,
+                        local_bindings,
+                        gren_syntax_node_as_ref(element),
                         position,
                     )
                 })
-            }
         }
-        GrenSyntaxPattern::ArrayExact(elements) => elements.iter().find_map(|element| {
-            gren_syntax_pattern_find_reference_at_position(
-                scope_expression,
-                gren_syntax_node_as_ref(element),
-                position,
-            )
-        }),
     }
 }
 
-fn gren_syntax_type_find_reference_at_position<'a>(
+fn gren_syntax_type_find_symbol_at_position<'a>(
     scope_declaration: &'a GrenSyntaxDeclaration,
     gren_syntax_type_node: GrenSyntaxNode<&'a GrenSyntaxType>,
     position: lsp_types::Position,
@@ -12627,7 +12588,7 @@ fn gren_syntax_type_find_reference_at_position<'a>(
                     })
                 } else {
                     arguments.iter().find_map(|argument| {
-                        gren_syntax_type_find_reference_at_position(
+                        gren_syntax_type_find_symbol_at_position(
                             scope_declaration,
                             gren_syntax_node_as_ref(argument),
                             position,
@@ -12639,14 +12600,14 @@ fn gren_syntax_type_find_reference_at_position<'a>(
                 input,
                 arrow_key_symbol_range: _,
                 output: maybe_output,
-            } => gren_syntax_type_find_reference_at_position(
+            } => gren_syntax_type_find_symbol_at_position(
                 scope_declaration,
                 gren_syntax_node_unbox(input),
                 position,
             )
             .or_else(|| {
                 maybe_output.as_ref().and_then(|output_node| {
-                    gren_syntax_type_find_reference_at_position(
+                    gren_syntax_type_find_symbol_at_position(
                         scope_declaration,
                         gren_syntax_node_unbox(output_node),
                         position,
@@ -12655,7 +12616,7 @@ fn gren_syntax_type_find_reference_at_position<'a>(
             }),
             GrenSyntaxType::Parenthesized(maybe_in_parens) => {
                 maybe_in_parens.as_ref().and_then(|in_parens| {
-                    gren_syntax_type_find_reference_at_position(
+                    gren_syntax_type_find_symbol_at_position(
                         scope_declaration,
                         gren_syntax_node_unbox(in_parens),
                         position,
@@ -12664,7 +12625,7 @@ fn gren_syntax_type_find_reference_at_position<'a>(
             }
             GrenSyntaxType::Record(fields) => fields.iter().find_map(|field| {
                 field.value.as_ref().and_then(|field_value_node| {
-                    gren_syntax_type_find_reference_at_position(
+                    gren_syntax_type_find_symbol_at_position(
                         scope_declaration,
                         gren_syntax_node_as_ref(field_value_node),
                         position,
@@ -12689,7 +12650,7 @@ fn gren_syntax_type_find_reference_at_position<'a>(
                 } else {
                     fields.iter().find_map(|field| {
                         field.value.as_ref().and_then(|field_value_node| {
-                            gren_syntax_type_find_reference_at_position(
+                            gren_syntax_type_find_symbol_at_position(
                                 scope_declaration,
                                 gren_syntax_node_as_ref(field_value_node),
                                 position,
@@ -12732,7 +12693,7 @@ fn on_some_break<A>(maybe: Option<A>) -> std::ops::ControlFlow<A, ()> {
     }
 }
 
-fn gren_syntax_expression_find_reference_at_position<'a>(
+fn gren_syntax_expression_find_symbol_at_position<'a>(
     mut local_bindings: GrenLocalBindings<'a>,
     scope_declaration: &'a GrenSyntaxDeclaration,
     gren_syntax_expression_node: GrenSyntaxNode<&'a GrenSyntaxExpression>,
@@ -12747,13 +12708,13 @@ fn gren_syntax_expression_find_reference_at_position<'a>(
             argument0,
             argument1_up,
         } => {
-            local_bindings = gren_syntax_expression_find_reference_at_position(
+            local_bindings = gren_syntax_expression_find_symbol_at_position(
                 local_bindings,
                 scope_declaration,
                 gren_syntax_node_unbox(called),
                 position,
             )?;
-            local_bindings = gren_syntax_expression_find_reference_at_position(
+            local_bindings = gren_syntax_expression_find_symbol_at_position(
                 local_bindings,
                 scope_declaration,
                 gren_syntax_node_unbox(argument0),
@@ -12762,7 +12723,7 @@ fn gren_syntax_expression_find_reference_at_position<'a>(
             argument1_up
                 .iter()
                 .try_fold(local_bindings, |local_bindings, argument| {
-                    gren_syntax_expression_find_reference_at_position(
+                    gren_syntax_expression_find_symbol_at_position(
                         local_bindings,
                         scope_declaration,
                         gren_syntax_node_as_ref(argument),
@@ -12776,7 +12737,7 @@ fn gren_syntax_expression_find_reference_at_position<'a>(
             cases,
         } => {
             if let Some(matched_node) = maybe_matched {
-                local_bindings = gren_syntax_expression_find_reference_at_position(
+                local_bindings = gren_syntax_expression_find_symbol_at_position(
                     local_bindings,
                     scope_declaration,
                     gren_syntax_node_unbox(matched_node),
@@ -12786,32 +12747,39 @@ fn gren_syntax_expression_find_reference_at_position<'a>(
             cases
                 .iter()
                 .try_fold(local_bindings, |mut local_bindings, case| {
-                    if let Some(found_symbol) = gren_syntax_pattern_find_reference_at_position(
-                        case.result.as_ref().map(gren_syntax_node_as_ref),
-                        gren_syntax_node_as_ref(&case.pattern),
+                    // we need to check that the position is actually in that case before committing to mutating local bindings
+                    if lsp_range_includes_position(
+                        lsp_types::Range {
+                            start: case.pattern.range.start,
+                            end: case
+                                .result
+                                .as_ref()
+                                .map(|n| n.range.end)
+                                .unwrap_or(case.pattern.range.end),
+                        },
                         position,
                     ) {
-                        return std::ops::ControlFlow::Break(found_symbol);
-                    }
-                    if let Some(case_result_node) = &case.result
-                    && // we need to check that the position is actually in that case before committing to mutating local bindings
-                    lsp_range_includes_position(case_result_node.range, position)
-                    {
-                        let mut introduced_bindings: Vec<GrenLocalBinding> = Vec::new();
-                        gren_syntax_pattern_bindings_into(
-                            &mut introduced_bindings,
+                        gren_syntax_pattern_bindings_for_scope_into(
+                            &mut local_bindings,
+                            case.result.as_ref().map(gren_syntax_node_as_ref),
                             gren_syntax_node_as_ref(&case.pattern),
                         );
-                        local_bindings.push((
-                            gren_syntax_node_as_ref(case_result_node),
-                            introduced_bindings,
-                        ));
-                        gren_syntax_expression_find_reference_at_position(
+                        local_bindings = gren_syntax_pattern_find_symbol_at_position(
+                            case.result.as_ref().map(gren_syntax_node_as_ref),
                             local_bindings,
-                            scope_declaration,
-                            gren_syntax_node_as_ref(case_result_node),
+                            gren_syntax_node_as_ref(&case.pattern),
                             position,
-                        )
+                        )?;
+                        if let Some(case_result_node) = &case.result {
+                            gren_syntax_expression_find_symbol_at_position(
+                                local_bindings,
+                                scope_declaration,
+                                gren_syntax_node_as_ref(case_result_node),
+                                position,
+                            )
+                        } else {
+                            std::ops::ControlFlow::Continue(local_bindings)
+                        }
                     } else {
                         std::ops::ControlFlow::Continue(local_bindings)
                     }
@@ -12827,7 +12795,7 @@ fn gren_syntax_expression_find_reference_at_position<'a>(
             on_false: maybe_on_false,
         } => {
             if let Some(condition_node) = maybe_condition {
-                local_bindings = gren_syntax_expression_find_reference_at_position(
+                local_bindings = gren_syntax_expression_find_symbol_at_position(
                     local_bindings,
                     scope_declaration,
                     gren_syntax_node_unbox(condition_node),
@@ -12835,7 +12803,7 @@ fn gren_syntax_expression_find_reference_at_position<'a>(
                 )?;
             }
             if let Some(on_true_node) = maybe_on_true {
-                local_bindings = gren_syntax_expression_find_reference_at_position(
+                local_bindings = gren_syntax_expression_find_symbol_at_position(
                     local_bindings,
                     scope_declaration,
                     gren_syntax_node_unbox(on_true_node),
@@ -12843,7 +12811,7 @@ fn gren_syntax_expression_find_reference_at_position<'a>(
                 )?;
             }
             match maybe_on_false {
-                Some(on_false_node) => gren_syntax_expression_find_reference_at_position(
+                Some(on_false_node) => gren_syntax_expression_find_symbol_at_position(
                     local_bindings,
                     scope_declaration,
                     gren_syntax_node_unbox(on_false_node),
@@ -12867,14 +12835,14 @@ fn gren_syntax_expression_find_reference_at_position<'a>(
                     range: operator.range,
                 });
             }
-            local_bindings = gren_syntax_expression_find_reference_at_position(
+            local_bindings = gren_syntax_expression_find_symbol_at_position(
                 local_bindings,
                 scope_declaration,
                 gren_syntax_node_unbox(left),
                 position,
             )?;
             match maybe_right {
-                Some(right_node) => gren_syntax_expression_find_reference_at_position(
+                Some(right_node) => gren_syntax_expression_find_symbol_at_position(
                     local_bindings,
                     scope_declaration,
                     gren_syntax_node_unbox(right_node),
@@ -12889,53 +12857,50 @@ fn gren_syntax_expression_find_reference_at_position<'a>(
             parameters,
             result: maybe_result,
         } => {
-            if let Some(found_symbol) = parameters.iter().find_map(|parameter| {
-                gren_syntax_pattern_find_reference_at_position(
+            for parameter_node in parameters {
+                gren_syntax_pattern_bindings_for_scope_into(
+                    &mut local_bindings,
                     maybe_result.as_ref().map(gren_syntax_node_unbox),
-                    gren_syntax_node_as_ref(parameter),
-                    position,
-                )
-            }) {
-                return std::ops::ControlFlow::Break(found_symbol);
+                    gren_syntax_node_as_ref(parameter_node),
+                );
             }
-            match maybe_result {
-                Some(result_node) => {
-                    let mut introduced_bindings: Vec<GrenLocalBinding> = Vec::new();
-                    for parameter_node in parameters {
-                        gren_syntax_pattern_bindings_into(
-                            &mut introduced_bindings,
-                            gren_syntax_node_as_ref(parameter_node),
-                        );
-                    }
-                    local_bindings.push((gren_syntax_node_unbox(result_node), introduced_bindings));
-                    gren_syntax_expression_find_reference_at_position(
+            local_bindings = match maybe_result {
+                Some(result_node) => gren_syntax_expression_find_symbol_at_position(
+                    local_bindings,
+                    scope_declaration,
+                    gren_syntax_node_unbox(result_node),
+                    position,
+                ),
+                None => std::ops::ControlFlow::Continue(local_bindings),
+            }?;
+            parameters
+                .iter()
+                .try_fold(local_bindings, |local_bindings, parameter| {
+                    gren_syntax_pattern_find_symbol_at_position(
+                        maybe_result.as_ref().map(gren_syntax_node_unbox),
                         local_bindings,
-                        scope_declaration,
-                        gren_syntax_node_unbox(result_node),
+                        gren_syntax_node_as_ref(parameter),
                         position,
                     )
-                }
-                None => std::ops::ControlFlow::Continue(local_bindings),
-            }
+                })
         }
         GrenSyntaxExpression::LetIn {
             declarations,
             in_keyword_range: _,
             result: maybe_result,
         } => {
-            let mut introduced_bindings: Vec<GrenLocalBinding> = Vec::new();
             for let_declaration_node in declarations {
-                gren_syntax_let_declaration_introduced_bindings_into(
-                    &mut introduced_bindings,
+                gren_syntax_let_declaration_introduced_bindings_for_scope_into(
+                    &mut local_bindings,
+                    Some(gren_syntax_expression_node),
                     &let_declaration_node.value,
                 );
             }
-            local_bindings.push((gren_syntax_expression_node, introduced_bindings));
             local_bindings =
                 declarations
                     .iter()
                     .try_fold(local_bindings, |local_bindings, declaration| {
-                        gren_syntax_let_declaration_find_reference_at_position(
+                        gren_syntax_let_declaration_find_symbol_at_position(
                             local_bindings,
                             scope_declaration,
                             gren_syntax_expression_node,
@@ -12944,7 +12909,7 @@ fn gren_syntax_expression_find_reference_at_position<'a>(
                         )
                     })?;
             match maybe_result {
-                Some(result_node) => gren_syntax_expression_find_reference_at_position(
+                Some(result_node) => gren_syntax_expression_find_symbol_at_position(
                     local_bindings,
                     scope_declaration,
                     gren_syntax_node_unbox(result_node),
@@ -12957,7 +12922,7 @@ fn gren_syntax_expression_find_reference_at_position<'a>(
             elements
                 .iter()
                 .try_fold(local_bindings, |local_bindings, element| {
-                    gren_syntax_expression_find_reference_at_position(
+                    gren_syntax_expression_find_symbol_at_position(
                         local_bindings,
                         scope_declaration,
                         gren_syntax_node_as_ref(element),
@@ -12966,7 +12931,7 @@ fn gren_syntax_expression_find_reference_at_position<'a>(
                 })
         }
         GrenSyntaxExpression::Negation(maybe_in_negation) => match maybe_in_negation {
-            Some(in_negation_node) => gren_syntax_expression_find_reference_at_position(
+            Some(in_negation_node) => gren_syntax_expression_find_symbol_at_position(
                 local_bindings,
                 scope_declaration,
                 gren_syntax_node_unbox(in_negation_node),
@@ -12985,7 +12950,7 @@ fn gren_syntax_expression_find_reference_at_position<'a>(
             })
         }
         GrenSyntaxExpression::Parenthesized(maybe_in_parens) => match maybe_in_parens {
-            Some(in_parens) => gren_syntax_expression_find_reference_at_position(
+            Some(in_parens) => gren_syntax_expression_find_symbol_at_position(
                 local_bindings,
                 scope_declaration,
                 gren_syntax_node_unbox(in_parens),
@@ -12997,7 +12962,7 @@ fn gren_syntax_expression_find_reference_at_position<'a>(
             fields
                 .iter()
                 .try_fold(local_bindings, |local_bindings, field| match &field.value {
-                    Some(field_value_node) => gren_syntax_expression_find_reference_at_position(
+                    Some(field_value_node) => gren_syntax_expression_find_symbol_at_position(
                         local_bindings,
                         scope_declaration,
                         gren_syntax_node_as_ref(field_value_node),
@@ -13007,7 +12972,7 @@ fn gren_syntax_expression_find_reference_at_position<'a>(
                 })
         }
         GrenSyntaxExpression::RecordAccess { record, field: _ } => {
-            gren_syntax_expression_find_reference_at_position(
+            gren_syntax_expression_find_symbol_at_position(
                 local_bindings,
                 scope_declaration,
                 gren_syntax_node_unbox(record),
@@ -13025,7 +12990,7 @@ fn gren_syntax_expression_find_reference_at_position<'a>(
             if let Some(record_node) = maybe_record
                 && lsp_range_includes_position(record_node.range, position)
             {
-                return gren_syntax_expression_find_reference_at_position(
+                return gren_syntax_expression_find_symbol_at_position(
                     local_bindings,
                     scope_declaration,
                     gren_syntax_node_unbox(record_node),
@@ -13035,7 +13000,7 @@ fn gren_syntax_expression_find_reference_at_position<'a>(
             fields
                 .iter()
                 .try_fold(local_bindings, |local_bindings, field| match &field.value {
-                    Some(field_value_node) => gren_syntax_expression_find_reference_at_position(
+                    Some(field_value_node) => gren_syntax_expression_find_symbol_at_position(
                         local_bindings,
                         scope_declaration,
                         gren_syntax_node_as_ref(field_value_node),
@@ -13048,10 +13013,22 @@ fn gren_syntax_expression_find_reference_at_position<'a>(
             qualification,
             name,
         } => std::ops::ControlFlow::Break(GrenSyntaxNode {
-            value: GrenSyntaxSymbol::VariableOrVariantOrOperator {
-                qualification: qualification,
-                name: name,
-                local_bindings: local_bindings,
+            value: if qualification.is_empty()
+                && let Some((local_binding_origin, scope)) =
+                    find_local_binding_scope_expression(&local_bindings, name)
+            {
+                GrenSyntaxSymbol::LocalVariable {
+                    name: name,
+                    origin: local_binding_origin,
+                    scope: scope,
+                    local_bindings: local_bindings,
+                }
+            } else {
+                GrenSyntaxSymbol::VariableOrVariantOrOperator {
+                    qualification: qualification,
+                    name: name,
+                    local_bindings: local_bindings,
+                }
             },
             range: gren_syntax_expression_node.range,
         }),
@@ -13059,7 +13036,7 @@ fn gren_syntax_expression_find_reference_at_position<'a>(
     }
 }
 
-fn gren_syntax_let_declaration_find_reference_at_position<'a>(
+fn gren_syntax_let_declaration_find_symbol_at_position<'a>(
     mut local_bindings: GrenLocalBindings<'a>,
     scope_declaration: &'a GrenSyntaxDeclaration,
     scope_expression: GrenSyntaxNode<&'a GrenSyntaxExpression>,
@@ -13075,13 +13052,14 @@ fn gren_syntax_let_declaration_find_reference_at_position<'a>(
             equals_key_symbol_range: _,
             expression: maybe_expression,
         } => {
-            on_some_break(gren_syntax_pattern_find_reference_at_position(
+            local_bindings = gren_syntax_pattern_find_symbol_at_position(
                 Some(scope_expression),
+                local_bindings,
                 gren_syntax_node_as_ref(pattern),
                 position,
-            ))?;
+            )?;
             match maybe_expression {
-                Some(expression_node) => gren_syntax_expression_find_reference_at_position(
+                Some(expression_node) => gren_syntax_expression_find_symbol_at_position(
                     local_bindings,
                     scope_declaration,
                     gren_syntax_node_as_ref(expression_node),
@@ -13099,65 +13077,68 @@ fn gren_syntax_let_declaration_find_reference_at_position<'a>(
         } => {
             if lsp_range_includes_position(start_name.range, position) {
                 return std::ops::ControlFlow::Break(GrenSyntaxNode {
-                    value: GrenSyntaxSymbol::LetDeclarationName {
+                    value: GrenSyntaxSymbol::LocalVariable {
                         name: &start_name.value,
-                        start_name_range: start_name.range,
-                        signature_type: maybe_signature
-                            .as_ref()
-                            .and_then(|signature| signature.type_.as_ref())
-                            .map(gren_syntax_node_as_ref),
-                        scope_expression: scope_expression,
+                        origin: LocalBindingOrigin::LetDeclaredVariable {
+                            start_name_range: start_name.range,
+                            signature: maybe_signature.as_ref(),
+                        },
+                        scope: Some(scope_expression),
+                        local_bindings: local_bindings,
                     },
                     range: start_name.range,
                 });
             }
-            on_some_break(parameters.iter().find_map(|parameter| {
-                gren_syntax_pattern_find_reference_at_position(
-                    maybe_result.as_ref().map(gren_syntax_node_as_ref),
-                    gren_syntax_node_as_ref(parameter),
-                    position,
-                )
-            }))?;
             if let Some(signature) = maybe_signature {
                 if let Some(implementation_name_range) = signature.implementation_name_range
                     && lsp_range_includes_position(implementation_name_range, position)
                 {
                     return std::ops::ControlFlow::Break(GrenSyntaxNode {
-                        value: GrenSyntaxSymbol::LetDeclarationName {
+                        value: GrenSyntaxSymbol::LocalVariable {
                             name: &start_name.value,
-                            start_name_range: start_name.range,
-                            signature_type: signature.type_.as_ref().map(gren_syntax_node_as_ref),
-                            scope_expression: scope_expression,
+                            origin: LocalBindingOrigin::LetDeclaredVariable {
+                                start_name_range: start_name.range,
+                                signature: maybe_signature.as_ref(),
+                            },
+                            scope: Some(scope_expression),
+                            local_bindings: local_bindings,
                         },
                         range: implementation_name_range,
                     });
                 }
                 if let Some(signature_type_node) = &signature.type_ {
-                    on_some_break(gren_syntax_type_find_reference_at_position(
+                    on_some_break(gren_syntax_type_find_symbol_at_position(
                         scope_declaration,
                         gren_syntax_node_as_ref(signature_type_node),
                         position,
                     ))?;
                 }
             }
+            for parameter_node in parameters {
+                gren_syntax_pattern_bindings_for_scope_into(
+                    &mut local_bindings,
+                    maybe_result.as_ref().map(gren_syntax_node_as_ref),
+                    gren_syntax_node_as_ref(parameter_node),
+                );
+            }
+            local_bindings =
+                parameters
+                    .iter()
+                    .try_fold(local_bindings, |local_bindings, parameter| {
+                        gren_syntax_pattern_find_symbol_at_position(
+                            maybe_result.as_ref().map(gren_syntax_node_as_ref),
+                            local_bindings,
+                            gren_syntax_node_as_ref(parameter),
+                            position,
+                        )
+                    })?;
             match maybe_result {
-                Some(result_node) => {
-                    let mut introduced_bindings: Vec<GrenLocalBinding> = Vec::new();
-                    for parameter_node in parameters {
-                        gren_syntax_pattern_bindings_into(
-                            &mut introduced_bindings,
-                            gren_syntax_node_as_ref(parameter_node),
-                        );
-                    }
-                    local_bindings
-                        .push((gren_syntax_node_as_ref(result_node), introduced_bindings));
-                    gren_syntax_expression_find_reference_at_position(
-                        local_bindings,
-                        scope_declaration,
-                        gren_syntax_node_as_ref(result_node),
-                        position,
-                    )
-                }
+                Some(result_node) => gren_syntax_expression_find_symbol_at_position(
+                    local_bindings,
+                    scope_declaration,
+                    gren_syntax_node_as_ref(result_node),
+                    position,
+                ),
                 None => std::ops::ControlFlow::Continue(local_bindings),
             }
         }
@@ -13187,7 +13168,6 @@ enum GrenSymbolToReference<'a> {
     },
     LocalBinding {
         name: &'a str,
-        including_let_declaration_name: bool,
     },
 }
 
@@ -13211,38 +13191,35 @@ fn gren_syntax_module_uses_of_reference_into(
         // a module cannot reference itself within its declarations, imports etc
         return;
     }
-    let symbol_to_collect_can_occur_here: bool = match symbol_to_collect_uses_of {
-        GrenSymbolToReference::ModuleName(module_origin_to_collect_uses_of)
-        | GrenSymbolToReference::Type {
-            module_origin: module_origin_to_collect_uses_of,
-            name: _,
-            including_declaration_name: _,
-        }
-        | GrenSymbolToReference::VariableOrVariant {
-            module_origin: module_origin_to_collect_uses_of,
-            name: _,
-            including_declaration_name: _,
-        } => {
-            Some(module_origin_to_collect_uses_of)
-                == maybe_self_module_name
+    let symbol_to_collect_can_occur_here: bool =
+        match symbol_to_collect_uses_of {
+            GrenSymbolToReference::ModuleName(module_origin_to_collect_uses_of)
+            | GrenSymbolToReference::Type {
+                module_origin: module_origin_to_collect_uses_of,
+                name: _,
+                including_declaration_name: _,
+            }
+            | GrenSymbolToReference::VariableOrVariant {
+                module_origin: module_origin_to_collect_uses_of,
+                name: _,
+                including_declaration_name: _,
+            } => {
+                maybe_self_module_name
                     .as_ref()
-                    .map(|node| node.value.as_ref())
-                || gren_syntax_module.imports.iter().any(|import| {
-                    import
-                        .value
-                        .module_name
-                        .as_ref()
-                        .map(|node| node.value.as_ref())
-                        == Some(module_origin_to_collect_uses_of)
-                })
-        }
-        GrenSymbolToReference::ImportAlias { .. } => false,
-        GrenSymbolToReference::TypeVariable(_) => false,
-        GrenSymbolToReference::LocalBinding { .. } => false,
-    };
+                    .is_some_and(|node| node.value.as_ref() == module_origin_to_collect_uses_of)
+                    || gren_syntax_module.imports.iter().any(|import| {
+                        import.value.module_name.as_ref().is_some_and(|node| {
+                            node.value.as_ref() == module_origin_to_collect_uses_of
+                        })
+                    })
+            }
+            GrenSymbolToReference::ImportAlias { .. } => false,
+            GrenSymbolToReference::TypeVariable(_) => false,
+            GrenSymbolToReference::LocalBinding { .. } => false,
+        };
     if !symbol_to_collect_can_occur_here {
-        // if not imported, that module name can never appear, so we can skip a bunch of
-        // traversing! (unless implicitly imported, but those modules are never renamed!)
+        // if not imported or declared in this module, that module name can never appear, so we can skip a bunch of
+        // traversing! (unless implicitly imported, but those modules are never renamed)
         return;
     }
     let self_module_name: &str = maybe_self_module_name
@@ -14038,10 +14015,8 @@ fn gren_syntax_expression_uses_of_reference_into(
             qualification,
             name,
         } => {
-            if let GrenSymbolToReference::LocalBinding {
-                name: symbol_name,
-                including_let_declaration_name: _,
-            } = symbol_to_collect_uses_of
+            if let GrenSymbolToReference::LocalBinding { name: symbol_name } =
+                symbol_to_collect_uses_of
                 && symbol_name == name.as_ref()
             {
                 if qualification.is_empty()
@@ -14127,26 +14102,12 @@ fn gren_syntax_let_declaration_uses_of_reference_into(
             }
         }
         GrenSyntaxLetDeclaration::VariableDeclaration {
-            start_name: start_name_node,
+            start_name: _,
             signature: maybe_signature,
             parameters,
             equals_key_symbol_range: _,
             result: maybe_result,
         } => {
-            if symbol_to_collect_uses_of
-                == (GrenSymbolToReference::LocalBinding {
-                    name: &start_name_node.value,
-                    including_let_declaration_name: true,
-                })
-            {
-                uses_so_far.push(start_name_node.range);
-                if let Some(signature) = maybe_signature
-                    && let Some(implementation_name_range) = signature.implementation_name_range
-                {
-                    uses_so_far.push(implementation_name_range);
-                }
-                return;
-            }
             if let Some(signature) = maybe_signature
                 && let Some(signature_type_node) = &signature.type_
             {
@@ -14310,6 +14271,37 @@ fn gren_syntax_let_declaration_introduced_bindings_into<'a>(
         }
     }
 }
+fn gren_syntax_let_declaration_introduced_bindings_for_scope_into<'a>(
+    bindings_so_far: &mut GrenLocalBindings<'a>,
+    scope_expression: Option<GrenSyntaxNode<&'a GrenSyntaxExpression>>,
+    gren_syntax_let_declaration: &'a GrenSyntaxLetDeclaration,
+) {
+    match gren_syntax_let_declaration {
+        GrenSyntaxLetDeclaration::Destructuring { pattern, .. } => {
+            gren_syntax_pattern_bindings_for_scope_into(
+                bindings_so_far,
+                scope_expression,
+                gren_syntax_node_as_ref(pattern),
+            );
+        }
+        GrenSyntaxLetDeclaration::VariableDeclaration {
+            start_name: start_name_node,
+            signature,
+            ..
+        } => {
+            bindings_so_far.push((
+                scope_expression,
+                GrenLocalBinding {
+                    name: &start_name_node.value,
+                    origin: LocalBindingOrigin::LetDeclaredVariable {
+                        signature: signature.as_ref(),
+                        start_name_range: start_name_node.range,
+                    },
+                },
+            ));
+        }
+    }
+}
 
 fn gren_syntax_pattern_bindings_into<'a>(
     bindings_so_far: &mut Vec<GrenLocalBinding<'a>>,
@@ -14394,6 +14386,115 @@ fn gren_syntax_pattern_field_bindings_into<'a>(
         Some(field_value) => {
             gren_syntax_pattern_bindings_into(
                 bindings_so_far,
+                gren_syntax_node_as_ref(field_value),
+            );
+        }
+    }
+}
+
+fn gren_syntax_pattern_bindings_for_scope_into<'a>(
+    bindings_so_far: &mut GrenLocalBindings<'a>,
+    scope_expression: Option<GrenSyntaxNode<&'a GrenSyntaxExpression>>,
+    gren_syntax_pattern_node: GrenSyntaxNode<&'a GrenSyntaxPattern>,
+) {
+    match gren_syntax_pattern_node.value {
+        GrenSyntaxPattern::As {
+            pattern: aliased_pattern_node,
+            as_keyword_range: _,
+            variable: maybe_variable,
+        } => {
+            gren_syntax_pattern_bindings_for_scope_into(
+                bindings_so_far,
+                scope_expression,
+                gren_syntax_node_unbox(aliased_pattern_node),
+            );
+            if let Some(variable_node) = maybe_variable {
+                bindings_so_far.push((
+                    scope_expression,
+                    GrenLocalBinding {
+                        origin: LocalBindingOrigin::PatternVariable(variable_node.range),
+                        name: &variable_node.value,
+                    },
+                ));
+            }
+        }
+        GrenSyntaxPattern::Char(_) => {}
+        GrenSyntaxPattern::Ignored(_) => {}
+        GrenSyntaxPattern::Int { .. } => {}
+        GrenSyntaxPattern::Parenthesized(maybe_in_parens) => {
+            if let Some(in_parens) = maybe_in_parens {
+                gren_syntax_pattern_bindings_for_scope_into(
+                    bindings_so_far,
+                    scope_expression,
+                    gren_syntax_node_unbox(in_parens),
+                );
+            }
+        }
+        GrenSyntaxPattern::Record(field_names) => {
+            for field in field_names {
+                gren_syntax_pattern_field_bindings_for_scope_into(
+                    bindings_so_far,
+                    scope_expression,
+                    field,
+                );
+            }
+        }
+        GrenSyntaxPattern::String { .. } => {}
+        GrenSyntaxPattern::Variable(variable) => {
+            bindings_so_far.push((
+                scope_expression,
+                GrenLocalBinding {
+                    origin: LocalBindingOrigin::PatternVariable(gren_syntax_pattern_node.range),
+                    name: variable,
+                },
+            ));
+        }
+        GrenSyntaxPattern::Variant {
+            reference: _,
+            value: maybe_value,
+        } => {
+            if let Some(value_node) = maybe_value {
+                gren_syntax_pattern_bindings_for_scope_into(
+                    bindings_so_far,
+                    scope_expression,
+                    gren_syntax_node_unbox(value_node),
+                );
+            }
+        }
+        GrenSyntaxPattern::ArrayExact(elements) => {
+            for element_node in elements {
+                gren_syntax_pattern_bindings_for_scope_into(
+                    bindings_so_far,
+                    scope_expression,
+                    gren_syntax_node_as_ref(element_node),
+                );
+            }
+        }
+    }
+}
+fn gren_syntax_pattern_field_bindings_for_scope_into<'a>(
+    bindings_so_far: &mut GrenLocalBindings<'a>,
+    scope_expression: Option<GrenSyntaxNode<&'a GrenSyntaxExpression>>,
+    gren_syntax_pattern_field: &'a GrenSyntaxPatternField,
+) {
+    match &gren_syntax_pattern_field.value {
+        None => {
+            if gren_syntax_pattern_field.equals_key_symbol_range.is_none() {
+                bindings_so_far.push((
+                    scope_expression,
+                    GrenLocalBinding {
+                        name: &gren_syntax_pattern_field.name.value,
+                        origin: LocalBindingOrigin::PatternRecordField(
+                            gren_syntax_pattern_field.name.range,
+                        ),
+                    },
+                ));
+            }
+        }
+        Some(field_value) => {
+            gren_syntax_pattern_bindings_for_scope_into(
+                bindings_so_far,
+                scope_expression,
                 gren_syntax_node_as_ref(field_value),
             );
         }
@@ -18546,8 +18647,10 @@ fn parse_gren_syntax_module(module_source: &str) -> GrenSyntaxModule {
         declarations: declarations,
     }
 }
-
-fn string_replace_lsp_range(
+fn string_replace_lsp_range(string: &mut String, range: lsp_types::Range, replacement: &str) {
+    string.replace_range(str_lsp_range_to_range(string, range), replacement);
+}
+fn string_replace_lsp_range_for_length(
     string: &mut String,
     range: lsp_types::Range,
     range_length: usize,
@@ -18566,6 +18669,27 @@ fn string_replace_lsp_range(
         start_offset..(start_offset + range_length_utf8),
         replacement,
     );
+}
+
+fn str_lsp_range_to_range(str: &str, range: lsp_types::Range) -> std::ops::Range<usize> {
+    let start_line_offset: usize =
+        str_offset_after_n_lsp_linebreaks(str, range.start.line as usize);
+    let start_offset: usize = start_line_offset
+        + str_starting_utf8_length_for_utf16_length(
+            &str[start_line_offset..],
+            range.start.character as usize,
+        );
+    let end_line_offset: usize = start_line_offset
+        + str_offset_after_n_lsp_linebreaks(
+            &str[start_line_offset..],
+            (range.end.line - range.start.line) as usize,
+        );
+    let end_offset: usize = end_line_offset
+        + str_starting_utf8_length_for_utf16_length(
+            &str[end_line_offset..],
+            range.end.character as usize,
+        );
+    start_offset..end_offset
 }
 fn str_offset_after_n_lsp_linebreaks(str: &str, linebreak_count_to_skip: usize) -> usize {
     if linebreak_count_to_skip == 0 {
