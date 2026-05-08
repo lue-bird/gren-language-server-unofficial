@@ -163,8 +163,18 @@ fn server_capabilities() -> lsp_types::ServerCapabilities {
                 },
             ),
         ),
-        text_document_sync: Some(lsp_types::TextDocumentSyncCapability::Kind(
-            lsp_types::TextDocumentSyncKind::INCREMENTAL,
+        text_document_sync: Some(lsp_types::TextDocumentSyncCapability::Options(
+            lsp_types::TextDocumentSyncOptions {
+                open_close: Some(true),
+                will_save: None,
+                will_save_wait_until: None,
+                change: Some(lsp_types::TextDocumentSyncKind::INCREMENTAL),
+                save: Some(lsp_types::TextDocumentSyncSaveOptions::SaveOptions(
+                    lsp_types::SaveOptions {
+                        include_text: Some(false),
+                    },
+                )),
+            },
         )),
         rename_provider: Some(lsp_types::OneOf::Right(lsp_types::RenameOptions {
             prepare_provider: Some(true),
@@ -730,9 +740,20 @@ fn publish_and_initialize_state_for_diagnostics_for_projects_in_workspace(
                     gren_make_errors
                         .iter()
                         .filter_map(|gren_make_file_error| {
-                            let url: lsp_types::Url =
-                                lsp_types::Url::from_file_path(gren_make_file_error.path.as_ref())
-                                    .ok()?;
+                            let url: lsp_types::Url = if (gren_make_file_error.path.as_ref()
+                                == "gren.json")
+                                || gren_make_file_error.path.is_empty()
+                            {
+                                lsp_types::Url::from_file_path(std::path::Path::join(
+                                    in_workspace_project_path,
+                                    "gren.json",
+                                ))
+                            } else {
+                                lsp_types::Url::from_file_path(std::path::Path::new(
+                                    gren_make_file_error.path.as_ref(),
+                                ))
+                            }
+                            .ok()?;
                             let diagnostics: Vec<lsp_types::Diagnostic> = gren_make_file_error
                                 .problems
                                 .iter()
@@ -807,6 +828,33 @@ fn publish_and_update_state_for_diagnostics_for_document(
                     version: None,
                 });
             }
+            if let Ok(gren_json_url) =
+                lsp_types::Url::from_file_path(std::path::Path::join(project_path, "gren.json"))
+            {
+                if let Some(gren_make_error_for_gren_json) =
+                    gren_make_errors.iter().find(|&file_error| {
+                        file_error.path.as_ref() == "gren.json" || file_error.path.is_empty()
+                    })
+                {
+                    updated_diagnostics_to_publish.push(lsp_types::PublishDiagnosticsParams {
+                        uri: gren_json_url,
+                        diagnostics: gren_make_error_for_gren_json
+                            .problems
+                            .iter()
+                            .map(gren_make_file_problem_to_diagnostic)
+                            .collect::<Vec<_>>(),
+                        version: None,
+                    });
+                } else if project.gren_make_errors.iter().any(|file_error| {
+                    file_error.path.as_ref() == "gren.json" || file_error.path.is_empty()
+                }) {
+                    updated_diagnostics_to_publish.push(lsp_types::PublishDiagnosticsParams {
+                        uri: gren_json_url,
+                        diagnostics: vec![],
+                        version: None,
+                    });
+                }
+            }
             for updated_file_diagnostics_to_publish in updated_diagnostics_to_publish {
                 let _ = publish_diagnostics(connection, updated_file_diagnostics_to_publish);
             }
@@ -859,9 +907,7 @@ fn compute_diagnostics(
     let gren_make_output: std::process::Output = gren_make_process
         .wait_with_output()
         .map_err(|error| format!("I wasn't able to read the output of gren make: {error}"))?;
-    Ok(if gren_make_output.stderr.is_empty() {
-        vec![]
-    } else {
+    if !gren_make_output.stderr.is_empty() {
         let gren_make_report_json: serde_json::Value =
             serde_json::from_slice(&gren_make_output.stderr).map_err(|parse_error| {
                 format!(
@@ -869,8 +915,10 @@ fn compute_diagnostics(
                     str::from_utf8(&gren_make_output.stderr).unwrap_or("")
                 )
             })?;
-        parse_gren_make_report(&gren_make_report_json)?
-    })
+        parse_gren_make_report(&gren_make_report_json)
+    } else {
+        Ok(vec![])
+    }
 }
 #[derive(Debug)]
 struct GrenMakeFileCompileError {
@@ -938,8 +986,8 @@ fn parse_gren_make_report(
         Some("error") => {
             let path: &str = json
                 .get("path")
-                .and_then(serde_json::Value::as_str)
-                .ok_or_else(|| format!("report file path must be string. Full report: {json}"))?;
+                .ok_or_else(|| format!("report file path field missing. Full report: {json}"))
+                .and_then(parse_gren_make_path)?;
             let title: &str = json
                 .get("title")
                 .and_then(serde_json::Value::as_str)
@@ -949,7 +997,7 @@ fn parse_gren_make_report(
                 .ok_or_else(|| format!("report file message field missing. Full report: {json}"))
                 .and_then(parse_gren_make_message)?;
             Ok(vec![GrenMakeFileCompileError {
-                path: Box::from(if path.is_empty() { "gren.json" } else { path }),
+                path: Box::from(path),
                 problems: vec![GrenMakeFileInternalCompileProblem {
                     title: Box::from(title),
                     range: lsp_types::Range::default(),
@@ -966,8 +1014,8 @@ fn parse_gren_make_file_compile_error(
 ) -> Result<GrenMakeFileCompileError, String> {
     let path: &str = json
         .get("path")
-        .and_then(serde_json::Value::as_str)
-        .ok_or("report file path must be string")?;
+        .ok_or_else(|| "report file path field missing".to_string())
+        .and_then(parse_gren_make_path)?;
     let problems: Vec<GrenMakeFileInternalCompileProblem> = json
         .get("problems")
         .and_then(serde_json::Value::as_array)
@@ -1000,6 +1048,12 @@ fn parse_gren_make_file_internal_compile_problem(
         range: range,
         message_markdown: message,
     })
+}
+fn parse_gren_make_path<'a>(json: &'a serde_json::Value) -> Result<&'a str, String> {
+    serde_json::Value::as_str(json)
+        .or_else(|| serde_json::Value::as_null(json).map(|()| ""))
+        .map(|path| if path.is_empty() { "gren.json" } else { path })
+        .ok_or_else(|| "path must be a string or null".to_string())
 }
 fn parse_gren_make_message(json: &serde_json::Value) -> Result<String, String> {
     match serde_json::Value::as_array(json) {
@@ -9918,7 +9972,7 @@ fn gren_syntax_expression_not_parenthesized_into(
                     if comments.is_empty() {
                         so_far.push_str("[]");
                     } else {
-                        so_far.push('[');
+                        so_far.push_str("[ ");
                         gren_syntax_comments_into(so_far, indent + 2, comments);
                         linebreak_indented_into(so_far, indent);
                         so_far.push(']');
