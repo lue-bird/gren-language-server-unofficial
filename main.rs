@@ -9796,7 +9796,7 @@ fn gren_syntax_expression_not_parenthesized_into(
                         },
                     ),
                 );
-                gren_syntax_pattern_not_parenthesized_into(
+                gren_syntax_pattern_parenthesized_if_space_separated_into(
                     so_far,
                     gren_syntax_node_as_ref(parameter0_node),
                 );
@@ -9818,7 +9818,7 @@ fn gren_syntax_expression_not_parenthesized_into(
                             },
                         ),
                     );
-                    gren_syntax_pattern_not_parenthesized_into(
+                    gren_syntax_pattern_parenthesized_if_space_separated_into(
                         so_far,
                         gren_syntax_node_as_ref(parameter_node),
                     );
