@@ -10,7 +10,7 @@ To specify gren-related executables, use these language server settings:
 - `gren-language-server-unofficial.grenFormatPath: "builtin" | string`: formatter executable, default `"builtin"`. `"builtin"` is a fast, unofficial rust formatter
 
 ## editor setups
-feel free to contribute, as I only use vscodium
+feel free to contribute, as I only use gram
 
 ### vscode-like
 #### pre-built
