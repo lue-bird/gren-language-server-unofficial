@@ -1,16 +1,19 @@
 // lsp still reports this specific error even when it is allowed in the cargo.toml
 #![allow(non_upper_case_globals)]
 
+use gen_lsp_types as lsp_types;
+
 struct State {
     configured: ConfiguredState,
     gren_version: &'static str,
     configured_gren_path: Option<Box<str>>,
     configured_gren_formatter: Option<ConfiguredGrenFormatter>,
+    diagnostic_message_capability: DiagnosticMessageCapability,
     projects: std::collections::HashMap<
         /* path to directory containing gren.json */ std::path::PathBuf,
         ProjectState,
     >,
-    open_gren_text_document_uris: std::collections::HashSet<lsp_types::Url>,
+    open_gren_text_document_uris: std::collections::HashSet<lsp_types::Uri>,
 }
 enum ConfiguredState {
     WaitingForInitial {
@@ -21,6 +24,12 @@ enum ConfiguredState {
 enum ConfiguredGrenFormatter {
     Builtin,
     Custom { path: Box<str> },
+}
+
+#[derive(Clone, Copy)]
+enum DiagnosticMessageCapability {
+    Markdown,
+    OnlyPlainText,
 }
 
 struct ProjectState {
@@ -55,7 +64,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             capabilities: server_capabilities(),
             server_info: Some(lsp_types::ServerInfo {
                 name: "gren-language-server-unofficial".to_string(),
-                version: Some("0.0.2".to_string()),
+                version: Some("0.0.3".to_string()),
             }),
         })?,
     )?;
@@ -76,13 +85,36 @@ fn initialize(
         projects: std::collections::HashMap::new(),
         gren_version: "0.6.3",
         configured: ConfiguredState::WaitingForInitial {
-            workspace_folders: initialize_arguments
+            workspace_folders: match initialize_arguments
+                .workspace_folders_initialize_params
                 .workspace_folders
-                .unwrap_or_else(Vec::new),
+            {
+                Some(lsp_types::WorkspaceFolders::WorkspaceFolderList(workspace_folders)) => {
+                    workspace_folders
+                }
+                Some(lsp_types::WorkspaceFolders::Null) => vec![],
+                None => vec![],
+            },
         },
         open_gren_text_document_uris: std::collections::HashSet::new(),
         configured_gren_path: None,
         configured_gren_formatter: None,
+        diagnostic_message_capability: if initialize_arguments
+            .capabilities
+            .text_document
+            .is_some_and(|text_document_capabilities| {
+                text_document_capabilities
+                    .diagnostic
+                    .is_some_and(|diagnostic_capabilities| {
+                        diagnostic_capabilities
+                            .markup_message_support
+                            .is_some_and(|markup_message_supported| markup_message_supported)
+                    })
+            }) {
+            DiagnosticMessageCapability::Markdown
+        } else {
+            DiagnosticMessageCapability::OnlyPlainText
+        },
     };
     if let Some(config_json) = &initialize_arguments.initialization_options {
         update_state_with_configuration(&mut state, connection, config_json);
@@ -93,8 +125,7 @@ fn initialize(
     }
     connection.sender.send(lsp_server::Message::Notification(
         lsp_server::Notification {
-            method: <lsp_types::request::RegisterCapability as lsp_types::request::Request>::METHOD
-                .to_string(),
+            method: <lsp_types::RegistrationRequest as lsp_types::Request>::METHOD.to_string(),
             params: serde_json::to_value(lsp_types::RegistrationParams {
                 registrations: initial_additional_capability_registrations(&state)?,
             })?,
@@ -112,13 +143,15 @@ fn initial_additional_capability_registrations(
                 .values()
                 .flat_map(|project| &project.source_directories)
                 .filter_map(|source_directory_path| {
-                    lsp_types::Url::from_directory_path(source_directory_path).ok()
+                    lsp_types::Uri::from_directory_path(source_directory_path).ok()
                 })
                 .map(|source_directory_url| lsp_types::FileSystemWatcher {
-                    glob_pattern: lsp_types::GlobPattern::Relative(lsp_types::RelativePattern {
-                        base_uri: lsp_types::OneOf::Right(source_directory_url),
-                        pattern: "**/{gren.json,*.gren}".to_string(),
-                    }),
+                    glob_pattern: lsp_types::GlobPattern::RelativePattern(
+                        lsp_types::RelativePattern {
+                            base_uri: lsp_types::BaseUri::Uri(source_directory_url),
+                            pattern: "**/{gren.json,*.gren}".to_string(),
+                        },
+                    ),
                     kind: Some(
                         lsp_types::WatchKind::Create
                             | lsp_types::WatchKind::Change
@@ -131,14 +164,18 @@ fn initial_additional_capability_registrations(
         serde_json::to_value(file_watch_registration_options)?;
     let file_watch_registration: lsp_types::Registration = lsp_types::Registration {
         id: "file-watch".to_string(),
-        method: <lsp_types::notification::DidChangeWatchedFiles as lsp_types::notification::Notification>::METHOD.to_string(),
+        method: <lsp_types::DidChangeWatchedFilesNotification as lsp_types::Notification>::METHOD
+            .to_string(),
         register_options: Some(file_watch_registration_options_json),
     };
-    let workspace_configuration_change_registration: lsp_types::Registration = lsp_types::Registration {
-        id: "workspace-configuration".to_string(),
-        method: <lsp_types::notification::DidChangeConfiguration as lsp_types::notification::Notification>::METHOD.to_string(),
-        register_options: None,
-    };
+    let workspace_configuration_change_registration: lsp_types::Registration =
+        lsp_types::Registration {
+            id: "workspace-configuration".to_string(),
+            method:
+                <lsp_types::DidChangeConfigurationNotification as lsp_types::Notification>::METHOD
+                    .to_string(),
+            register_options: None,
+        };
     Ok(vec![
         file_watch_registration,
         workspace_configuration_change_registration,
@@ -146,43 +183,44 @@ fn initial_additional_capability_registrations(
 }
 fn server_capabilities() -> lsp_types::ServerCapabilities {
     lsp_types::ServerCapabilities {
-        hover_provider: Some(lsp_types::HoverProviderCapability::Simple(true)),
-        definition_provider: Some(lsp_types::OneOf::Left(true)),
-        semantic_tokens_provider: Some(
-            lsp_types::SemanticTokensServerCapabilities::SemanticTokensOptions(
-                lsp_types::SemanticTokensOptions {
-                    work_done_progress_options: lsp_types::WorkDoneProgressOptions {
-                        work_done_progress: None,
-                    },
-                    legend: lsp_types::SemanticTokensLegend {
-                        token_modifiers: vec![],
-                        token_types: Vec::from(token_types),
-                    },
-                    range: None,
-                    full: Some(lsp_types::SemanticTokensFullOptions::Bool(true)),
+        hover_provider: Some(lsp_types::HoverProvider::Bool(true)),
+        definition_provider: Some(lsp_types::DefinitionProvider::Bool(true)),
+        semantic_tokens_provider: Some(lsp_types::SemanticTokensProvider::SemanticTokensOptions(
+            lsp_types::SemanticTokensOptions {
+                work_done_progress_options: lsp_types::WorkDoneProgressOptions {
+                    work_done_progress: None,
                 },
-            ),
-        ),
-        text_document_sync: Some(lsp_types::TextDocumentSyncCapability::Options(
+                legend: lsp_types::SemanticTokensLegend {
+                    token_modifiers: vec![],
+                    token_types: token_types
+                        .iter()
+                        .map(|token_type| token_type.as_str().to_string())
+                        .collect(),
+                },
+                range: None,
+                full: Some(lsp_types::Full::Bool(true)),
+            },
+        )),
+        text_document_sync: Some(lsp_types::TextDocumentSync::Options(
             lsp_types::TextDocumentSyncOptions {
                 open_close: Some(true),
                 will_save: None,
                 will_save_wait_until: None,
-                change: Some(lsp_types::TextDocumentSyncKind::INCREMENTAL),
-                save: Some(lsp_types::TextDocumentSyncSaveOptions::SaveOptions(
-                    lsp_types::SaveOptions {
-                        include_text: Some(false),
-                    },
-                )),
+                change: Some(lsp_types::TextDocumentSyncKind::Incremental),
+                save: Some(lsp_types::Save::SaveOptions(lsp_types::SaveOptions {
+                    include_text: Some(false),
+                })),
             },
         )),
-        rename_provider: Some(lsp_types::OneOf::Right(lsp_types::RenameOptions {
-            prepare_provider: Some(true),
-            work_done_progress_options: lsp_types::WorkDoneProgressOptions {
-                work_done_progress: None,
+        rename_provider: Some(lsp_types::RenameProvider::RenameOptions(
+            lsp_types::RenameOptions {
+                prepare_provider: Some(true),
+                work_done_progress_options: lsp_types::WorkDoneProgressOptions {
+                    work_done_progress: None,
+                },
             },
-        })),
-        references_provider: Some(lsp_types::OneOf::Left(true)),
+        )),
+        references_provider: Some(lsp_types::ReferencesProvider::Bool(true)),
         completion_provider: Some(lsp_types::CompletionOptions {
             resolve_provider: Some(false),
             trigger_characters: Some(vec![".".to_string()]),
@@ -190,19 +228,20 @@ fn server_capabilities() -> lsp_types::ServerCapabilities {
             work_done_progress_options: lsp_types::WorkDoneProgressOptions {
                 work_done_progress: None,
             },
-            completion_item: Some(lsp_types::CompletionOptionsCompletionItem {
+            completion_item: Some(lsp_types::ServerCompletionItemOptions {
                 label_details_support: None,
             }),
         }),
-        document_formatting_provider: Some(lsp_types::OneOf::Left(true)),
-        document_symbol_provider: Some(lsp_types::OneOf::Left(true)),
-        code_action_provider: Some(lsp_types::CodeActionProviderCapability::Options(
+        document_formatting_provider: Some(lsp_types::DocumentFormattingProvider::Bool(true)),
+        document_symbol_provider: Some(lsp_types::DocumentSymbolProvider::Bool(true)),
+        code_action_provider: Some(lsp_types::CodeActionProvider::CodeActionOptions(
             lsp_types::CodeActionOptions {
-                code_action_kinds: Some(vec![lsp_types::CodeActionKind::QUICKFIX]),
+                code_action_kinds: Some(vec![lsp_types::CodeActionKind::QuickFix]),
                 resolve_provider: None,
                 work_done_progress_options: lsp_types::WorkDoneProgressOptions {
                     work_done_progress: None,
                 },
+                documentation: None,
             },
         )),
         ..lsp_types::ServerCapabilities::default()
@@ -222,7 +261,7 @@ fn server_loop(
                     connection,
                     &state,
                     request.id,
-                    &request.method,
+                    lsp_types::LspRequestMethod::from(request.method.as_str()),
                     request.params,
                 ) {
                     eprintln!("request {} failed: {error}", &request.method);
@@ -232,7 +271,7 @@ fn server_loop(
                 if let Err(err) = handle_notification(
                     connection,
                     &mut state,
-                    &notification.method,
+                    lsp_types::LspNotificationMethod::from(notification.method.as_str()),
                     notification.params,
                 ) {
                     eprintln!("notification {} failed: {err}", notification.method);
@@ -252,55 +291,55 @@ fn server_loop(
 fn handle_notification(
     connection: &lsp_server::Connection,
     state: &mut State,
-    notification_method: &str,
+    notification_method: lsp_types::LspNotificationMethod,
     notification_arguments_json: serde_json::Value,
 ) -> Result<(), Box<dyn std::error::Error>> {
     match notification_method {
-        <lsp_types::notification::DidOpenTextDocument as lsp_types::notification::Notification>::METHOD => {
-            let arguments: <lsp_types::notification::DidOpenTextDocument as lsp_types::notification::Notification>::Params =
+        <lsp_types::DidOpenTextDocumentNotification as lsp_types::Notification>::METHOD => {
+            let arguments: <lsp_types::DidOpenTextDocumentNotification as lsp_types::Notification>::Params =
                 serde_json::from_value(notification_arguments_json)?;
             update_state_on_did_open_text_document(state, arguments);
         }
-        <lsp_types::notification::DidCloseTextDocument as lsp_types::notification::Notification>::METHOD => {
-            let arguments: <lsp_types::notification::DidCloseTextDocument as lsp_types::notification::Notification>::Params =
+        <lsp_types::DidCloseTextDocumentNotification as lsp_types::Notification>::METHOD => {
+            let arguments: <lsp_types::DidCloseTextDocumentNotification as lsp_types::Notification>::Params =
                 serde_json::from_value(notification_arguments_json)?;
-            state.open_gren_text_document_uris.remove(&arguments.text_document.uri);
+            state
+                .open_gren_text_document_uris
+                .remove(&arguments.text_document.uri);
         }
-        <lsp_types::notification::DidChangeTextDocument as lsp_types::notification::Notification>::METHOD => {
-            let arguments: <lsp_types::notification::DidChangeTextDocument as lsp_types::notification::Notification>::Params =
+        <lsp_types::DidChangeTextDocumentNotification as lsp_types::Notification>::METHOD => {
+            let arguments: <lsp_types::DidChangeTextDocumentNotification as lsp_types::Notification>::Params =
                 serde_json::from_value(notification_arguments_json)?;
             update_state_on_did_change_text_document(state, arguments);
         }
-        <lsp_types::notification::DidSaveTextDocument as lsp_types::notification::Notification>::METHOD => {
-            let arguments: <lsp_types::notification::DidSaveTextDocument as lsp_types::notification::Notification>::Params =
+        <lsp_types::DidSaveTextDocumentNotification as lsp_types::Notification>::METHOD => {
+            let arguments: <lsp_types::DidSaveTextDocumentNotification as lsp_types::Notification>::Params =
                 serde_json::from_value(notification_arguments_json)?;
-            if let Ok(saved_path) = &arguments
-                .text_document
-                .uri
-                .to_file_path()
+            if let Ok(saved_path) = &arguments.text_document.uri.to_file_path()
                 && let Some((saved_project_path, saved_project_state)) =
                     state_get_mut_project_by_module_path(&mut state.projects, saved_path)
             {
                 publish_and_update_state_for_diagnostics_for_document(
                     connection,
                     state.configured_gren_path.as_deref(),
+                    state.diagnostic_message_capability,
                     saved_project_path,
                     saved_project_state,
                     std::iter::empty(),
                 );
             }
         }
-        <lsp_types::notification::DidChangeWatchedFiles as lsp_types::notification::Notification>::METHOD => {
-            let arguments: <lsp_types::notification::DidChangeWatchedFiles as lsp_types::notification::Notification>::Params =
+        <lsp_types::DidChangeWatchedFilesNotification as lsp_types::Notification>::METHOD => {
+            let arguments: <lsp_types::DidChangeWatchedFilesNotification as lsp_types::Notification>::Params =
                 serde_json::from_value(notification_arguments_json)?;
             update_state_on_did_change_watched_files(connection, state, arguments);
         }
-        <lsp_types::notification::DidChangeConfiguration as lsp_types::notification::Notification>::METHOD => {
-            connection.sender.send(lsp_server::Message::Request(
-                configuration_request()?
-            ))?;
+        <lsp_types::DidChangeConfigurationNotification as lsp_types::Notification>::METHOD => {
+            connection
+                .sender
+                .send(lsp_server::Message::Request(configuration_request()?))?;
         }
-        <lsp_types::notification::Exit as lsp_types::notification::Notification>::METHOD => {}
+        <lsp_types::ExitNotification as lsp_types::Notification>::METHOD => {}
         _ => {}
     }
     Ok(())
@@ -346,7 +385,7 @@ fn update_state_on_did_change_watched_files(
         // E.g. go to definition needs an up to date module syntax tree
         // in a potentially un-opened file that could have been changed externally,
         // e.g. by formatting, generating code, ...
-        !(file_event.typ == lsp_types::FileChangeType::CHANGED
+        !(file_event.kind == lsp_types::FileChangeType::Changed
             && state.open_gren_text_document_uris.contains(&file_event.uri))
     });
     if arguments.changes.is_empty() {
@@ -356,14 +395,14 @@ fn update_state_on_did_change_watched_files(
         std::collections::HashSet::new();
     for (project_path, project_state) in state.projects.iter_mut() {
         let mut project_was_updated: bool = false;
-        let mut removed_paths: Vec<lsp_types::Url> = Vec::new();
+        let mut removed_paths: Vec<lsp_types::Uri> = Vec::new();
         for (file_change_uri, changed_file_path, file_change_type) in
             arguments.changes.iter().filter_map(|file_change_event| {
                 match file_change_event.uri.to_file_path() {
                     Ok(changed_file_path) => Some((
                         &file_change_event.uri,
                         changed_file_path,
-                        file_change_event.typ,
+                        file_change_event.kind,
                     )),
                     Err(()) => None,
                 }
@@ -380,13 +419,13 @@ fn update_state_on_did_change_watched_files(
                     .any(|source_dir| changed_file_path.starts_with(source_dir))
             {
                 match file_change_type {
-                    lsp_types::FileChangeType::DELETED => {
+                    lsp_types::FileChangeType::Deleted => {
                         if project_state.modules.remove(&changed_file_path).is_some() {
                             project_was_updated = true;
                             removed_paths.push(file_change_uri.clone());
                         }
                     }
-                    lsp_types::FileChangeType::CREATED | lsp_types::FileChangeType::CHANGED => {
+                    lsp_types::FileChangeType::Created | lsp_types::FileChangeType::Changed => {
                         match std::fs::read_to_string(&changed_file_path) {
                             Err(_) => {}
                             Ok(changed_file_source) => {
@@ -398,12 +437,6 @@ fn update_state_on_did_change_watched_files(
                             }
                         }
                     }
-                    unknown_file_change_type => {
-                        eprintln!(
-                            "unknown file change type sent by LSP client: {:?}",
-                            unknown_file_change_type
-                        );
-                    }
                 }
             }
         }
@@ -411,6 +444,7 @@ fn update_state_on_did_change_watched_files(
             publish_and_update_state_for_diagnostics_for_document(
                 connection,
                 state.configured_gren_path.as_deref(),
+                state.diagnostic_message_capability,
                 project_path,
                 project_state,
                 removed_paths.into_iter(),
@@ -482,24 +516,21 @@ fn path_is_gren_json_in_project_path(
             .is_some_and(|name| name == "gren.json")
 }
 fn configuration_request() -> Result<lsp_server::Request, Box<dyn std::error::Error>> {
-    let requested_configuration: <lsp_types::request::WorkspaceConfiguration as lsp_types::request::Request>::Params =
+    let requested_configuration: <lsp_types::ConfigurationRequest as lsp_types::Request>::Params =
         lsp_types::ConfigurationParams {
-            items: vec![
-                lsp_types::ConfigurationItem {
-                    scope_uri: None,
-                    section: Some("gren-language-server-unofficial".to_string())
-                }
-            ]
+            items: vec![lsp_types::ConfigurationItem {
+                scope_uri: None,
+                section: Some("gren-language-server-unofficial".to_string()),
+            }],
         };
     Ok(lsp_server::Request {
-        id: lsp_server::RequestId::from(ServerRequestId::WorkspaceConfiguration as i32),
-        method: <lsp_types::request::WorkspaceConfiguration as lsp_types::request::Request>::METHOD
-            .to_string(),
+        id: lsp_server::RequestId::from(ServerRequestId::ConfigurationRequest as i32),
+        method: <lsp_types::ConfigurationRequest as lsp_types::Request>::METHOD.to_string(),
         params: serde_json::to_value(requested_configuration)?,
     })
 }
 enum ServerRequestId {
-    WorkspaceConfiguration,
+    ConfigurationRequest,
 }
 fn handle_response(
     connection: &lsp_server::Connection,
@@ -507,10 +538,10 @@ fn handle_response(
     response_id: &lsp_server::RequestId,
     maybe_response_result: Option<serde_json::Value>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    if response_id == &lsp_server::RequestId::from(ServerRequestId::WorkspaceConfiguration as i32)
+    if response_id == &lsp_server::RequestId::from(ServerRequestId::ConfigurationRequest as i32)
         && let Some(response_result) = maybe_response_result
     {
-        let response_parsed: <lsp_types::request::WorkspaceConfiguration as lsp_types::request::Request>::Result =
+        let response_parsed: <lsp_types::ConfigurationRequest as lsp_types::Request>::Result =
             serde_json::from_value(response_result)?;
         if let Some(config_json) = response_parsed.first() {
             update_state_with_configuration(state, connection, config_json);
@@ -522,32 +553,32 @@ fn handle_request(
     connection: &lsp_server::Connection,
     state: &State,
     request_id: lsp_server::RequestId,
-    request_method: &str,
+    request_method: lsp_types::LspRequestMethod,
     request_arguments_json: serde_json::Value,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let response: Result<serde_json::Value, lsp_server::ResponseError> = match request_method {
-        <lsp_types::request::HoverRequest as lsp_types::request::Request>::METHOD => {
-            let arguments: <lsp_types::request::HoverRequest as lsp_types::request::Request>::Params =
+        <lsp_types::HoverRequest as lsp_types::Request>::METHOD => {
+            let arguments: <lsp_types::HoverRequest as lsp_types::Request>::Params =
                 serde_json::from_value(request_arguments_json)?;
-            let maybe_hover_result: <lsp_types::request::HoverRequest as lsp_types::request::Request>::Result =
+            let maybe_hover_result: <lsp_types::HoverRequest as lsp_types::Request>::Result =
                 respond_to_hover(state, &arguments);
             Ok(serde_json::to_value(maybe_hover_result)?)
         }
-        <lsp_types::request::GotoDefinition as lsp_types::request::Request>::METHOD => {
-            let arguments: <lsp_types::request::GotoDefinition as lsp_types::request::Request>::Params =
+        <lsp_types::DefinitionRequest as lsp_types::Request>::METHOD => {
+            let arguments: <lsp_types::DefinitionRequest as lsp_types::Request>::Params =
                 serde_json::from_value(request_arguments_json)?;
-            let maybe_hover_result: <lsp_types::request::GotoDefinition as lsp_types::request::Request>::Result =
+            let maybe_hover_result: <lsp_types::DefinitionRequest as lsp_types::Request>::Result =
                 respond_to_goto_definition(state, arguments);
             Ok(serde_json::to_value(maybe_hover_result)?)
         }
-        <lsp_types::request::PrepareRenameRequest as lsp_types::request::Request>::METHOD => {
-            let prepare_rename_arguments: <lsp_types::request::PrepareRenameRequest as lsp_types::request::Request>::Params =
+        <lsp_types::PrepareRenameRequest as lsp_types::Request>::METHOD => {
+            let prepare_rename_arguments: <lsp_types::PrepareRenameRequest as lsp_types::Request>::Params =
                 serde_json::from_value(request_arguments_json)?;
             let prepared: Option<
-                Result<lsp_types::PrepareRenameResponse, lsp_server::ResponseError>,
+                Result<lsp_types::PrepareRenameResult, lsp_server::ResponseError>,
             > = respond_to_prepare_rename(state, &prepare_rename_arguments);
             let response_result: Result<
-                <lsp_types::request::PrepareRenameRequest as lsp_types::request::Request>::Result,
+                <lsp_types::PrepareRenameRequest as lsp_types::Request>::Result,
                 lsp_server::ResponseError,
             > = match prepared {
                 None => Ok(None),
@@ -558,63 +589,63 @@ fn handle_request(
                 Ok(maybe_response) => Ok(serde_json::to_value(maybe_response)?),
             }
         }
-        <lsp_types::request::Rename as lsp_types::request::Request>::METHOD => {
-            let arguments: <lsp_types::request::Rename as lsp_types::request::Request>::Params =
+        <lsp_types::RenameRequest as lsp_types::Request>::METHOD => {
+            let arguments: <lsp_types::RenameRequest as lsp_types::Request>::Params =
                 serde_json::from_value(request_arguments_json)?;
-            let maybe_rename_edits: Option<Vec<lsp_types::TextDocumentEdit>> =
+            let maybe_rename_edits: Option<Vec<lsp_types::DocumentChange>> =
                 respond_to_rename(state, arguments);
-            let result: <lsp_types::request::Rename as lsp_types::request::Request>::Result =
+            let result: <lsp_types::RenameRequest as lsp_types::Request>::Result =
                 maybe_rename_edits.map(|rename_edits| lsp_types::WorkspaceEdit {
                     changes: None,
-                    document_changes: Some(lsp_types::DocumentChanges::Edits(rename_edits)),
+                    document_changes: Some(rename_edits),
                     change_annotations: None,
                 });
             Ok(serde_json::to_value(result)?)
         }
-        <lsp_types::request::References as lsp_types::request::Request>::METHOD => {
-            let arguments: <lsp_types::request::References as lsp_types::request::Request>::Params =
+        <lsp_types::ReferencesRequest as lsp_types::Request>::METHOD => {
+            let arguments: <lsp_types::ReferencesRequest as lsp_types::Request>::Params =
                 serde_json::from_value(request_arguments_json)?;
-            let result: <lsp_types::request::References as lsp_types::request::Request>::Result =
+            let result: <lsp_types::ReferencesRequest as lsp_types::Request>::Result =
                 respond_to_references(state, arguments);
             Ok(serde_json::to_value(result)?)
         }
-        <lsp_types::request::SemanticTokensFullRequest as lsp_types::request::Request>::METHOD => {
-            let arguments: <lsp_types::request::SemanticTokensFullRequest as lsp_types::request::Request>::Params =
+        <lsp_types::SemanticTokensRequest as lsp_types::Request>::METHOD => {
+            let arguments: <lsp_types::SemanticTokensRequest as lsp_types::Request>::Params =
                 serde_json::from_value(request_arguments_json)?;
-            let result: <lsp_types::request::SemanticTokensFullRequest as lsp_types::request::Request>::Result =
+            let result: <lsp_types::SemanticTokensRequest as lsp_types::Request>::Result =
                 respond_to_semantic_tokens_full(state, &arguments);
             Ok(serde_json::to_value(result)?)
         }
-        <lsp_types::request::Completion as lsp_types::request::Request>::METHOD => {
-            let arguments: <lsp_types::request::Completion as lsp_types::request::Request>::Params =
+        <lsp_types::CompletionRequest as lsp_types::Request>::METHOD => {
+            let arguments: <lsp_types::CompletionRequest as lsp_types::Request>::Params =
                 serde_json::from_value(request_arguments_json)?;
-            let result: <lsp_types::request::Completion as lsp_types::request::Request>::Result =
+            let result: <lsp_types::CompletionRequest as lsp_types::Request>::Result =
                 respond_to_completion(state, &arguments);
             Ok(serde_json::to_value(result)?)
         }
-        <lsp_types::request::Formatting as lsp_types::request::Request>::METHOD => {
-            let arguments: <lsp_types::request::Formatting as lsp_types::request::Request>::Params =
+        <lsp_types::DocumentFormattingRequest as lsp_types::Request>::METHOD => {
+            let arguments: <lsp_types::DocumentFormattingRequest as lsp_types::Request>::Params =
                 serde_json::from_value(request_arguments_json)?;
-            let result: <lsp_types::request::Formatting as lsp_types::request::Request>::Result =
+            let result: <lsp_types::DocumentFormattingRequest as lsp_types::Request>::Result =
                 respond_to_document_formatting(state, &arguments);
             Ok(serde_json::to_value(result)?)
         }
-        <lsp_types::request::DocumentSymbolRequest as lsp_types::request::Request>::METHOD => {
-            let arguments: <lsp_types::request::DocumentSymbolRequest as lsp_types::request::Request>::Params =
+        <lsp_types::DocumentSymbolRequest as lsp_types::Request>::METHOD => {
+            let arguments: <lsp_types::DocumentSymbolRequest as lsp_types::Request>::Params =
                 serde_json::from_value(request_arguments_json)?;
-            let result: <lsp_types::request::DocumentSymbolRequest as lsp_types::request::Request>::Result =
+            let result: <lsp_types::DocumentSymbolRequest as lsp_types::Request>::Result =
                 respond_to_document_symbols(state, &arguments);
             Ok(serde_json::to_value(result)?)
         }
-        <lsp_types::request::CodeActionRequest as lsp_types::request::Request>::METHOD => {
-            let arguments: <lsp_types::request::CodeActionRequest as lsp_types::request::Request>::Params =
+        <lsp_types::CodeActionRequest as lsp_types::Request>::METHOD => {
+            let arguments: <lsp_types::CodeActionRequest as lsp_types::Request>::Params =
                 serde_json::from_value(request_arguments_json)?;
-            let result: <lsp_types::request::CodeActionRequest as lsp_types::request::Request>::Result =
+            let result: <lsp_types::CodeActionRequest as lsp_types::Request>::Result =
                 respond_to_code_action(state, arguments);
             Ok(serde_json::to_value(result)?)
         }
-        <lsp_types::request::Shutdown as lsp_types::request::Request>::METHOD => {
-            let result: <lsp_types::request::Shutdown as lsp_types::request::Request>::Result = ();
+        <lsp_types::ShutdownRequest as lsp_types::Request>::METHOD => {
+            let result: <lsp_types::ShutdownRequest as lsp_types::Request>::Result = ();
             Ok(serde_json::to_value(result)?)
         }
         _ => Err(lsp_server::ResponseError {
@@ -664,11 +695,12 @@ fn send_response_error(
 }
 fn publish_diagnostics(
     connection: &lsp_server::Connection,
-    diagnostics: <lsp_types::notification::PublishDiagnostics as lsp_types::notification::Notification>::Params,
+    diagnostics: <lsp_types::PublishDiagnosticsNotification as lsp_types::Notification>::Params,
 ) -> Result<(), Box<dyn std::error::Error>> {
     connection.sender.send(lsp_server::Message::Notification(
         lsp_server::Notification {
-            method: <lsp_types::notification::PublishDiagnostics as lsp_types::notification::Notification>::METHOD.to_string(),
+            method: <lsp_types::PublishDiagnosticsNotification as lsp_types::Notification>::METHOD
+                .to_string(),
             params: serde_json::to_value(diagnostics)?,
         },
     ))?;
@@ -679,33 +711,41 @@ fn update_state_on_did_change_text_document(
     state: &mut State,
     did_change_text_document: lsp_types::DidChangeTextDocumentParams,
 ) {
-    let Ok(changed_file_path) = did_change_text_document.text_document.uri.to_file_path() else {
+    let Ok(changed_file_path) = did_change_text_document
+        .text_document
+        .text_document_identifier
+        .uri
+        .to_file_path()
+    else {
         return;
     };
     for project_state in state.projects.values_mut() {
         if let Some(module_state) = project_state.modules.get_mut(&changed_file_path) {
             let mut updated_source: String = std::mem::take(&mut module_state.source);
             for change in did_change_text_document.content_changes {
-                match (change.range, change.range_length) {
+                match change {
                     // means full replacement
-                    (None, None) => {
-                        updated_source = change.text;
+                    lsp_types::TextDocumentContentChangeEvent::TextDocumentContentChangeWholeDocument(new_text) => {
+                        updated_source = new_text.text;
                     }
-                    // zed for example does not send a range length
-                    (Some(range), None) => {
-                        string_replace_lsp_range(&mut updated_source, range, &change.text);
+                    lsp_types::TextDocumentContentChangeEvent::TextDocumentContentChangePartial(change) => {
+                        match { #[allow(deprecated)] change.range_length } {
+                            // zed for example does not send a range length
+                            None => {
+                                string_replace_lsp_range(&mut updated_source, change.range, &change.text);
+                            }
+                            // sending a length is deprecated (sadly) but e.g. vscode still sends it
+                            // which allows us to do a faster string replace
+                            Some(range_length) => {
+                                string_replace_lsp_range_for_length(
+                                    &mut updated_source,
+                                    change.range,
+                                    range_length as usize,
+                                    &change.text,
+                                );
+                            }
+                        }
                     }
-                    // sending a length is deprecated (sadly) but e.g. vscode still sends it
-                    // which allows us to do a faster string replace
-                    (Some(range), Some(range_length)) => {
-                        string_replace_lsp_range_for_length(
-                            &mut updated_source,
-                            range,
-                            range_length as usize,
-                            &change.text,
-                        );
-                    }
-                    (None, Some(_)) => {}
                 }
             }
             *module_state = initialize_module_state_from_source(updated_source);
@@ -740,16 +780,16 @@ fn publish_and_initialize_state_for_diagnostics_for_projects_in_workspace(
                     gren_make_errors
                         .iter()
                         .filter_map(|gren_make_file_error| {
-                            let url: lsp_types::Url = if (gren_make_file_error.path.as_ref()
+                            let url: lsp_types::Uri = if (gren_make_file_error.path.as_ref()
                                 == "gren.json")
                                 || gren_make_file_error.path.is_empty()
                             {
-                                lsp_types::Url::from_file_path(std::path::Path::join(
+                                lsp_types::Uri::from_file_path(std::path::Path::join(
                                     in_workspace_project_path,
                                     "gren.json",
                                 ))
                             } else {
-                                lsp_types::Url::from_file_path(std::path::Path::new(
+                                lsp_types::Uri::from_file_path(std::path::Path::new(
                                     gren_make_file_error.path.as_ref(),
                                 ))
                             }
@@ -757,7 +797,12 @@ fn publish_and_initialize_state_for_diagnostics_for_projects_in_workspace(
                             let diagnostics: Vec<lsp_types::Diagnostic> = gren_make_file_error
                                 .problems
                                 .iter()
-                                .map(gren_make_file_problem_to_diagnostic)
+                                .map(|problem| {
+                                    gren_make_file_problem_to_diagnostic(
+                                        problem,
+                                        state.diagnostic_message_capability,
+                                    )
+                                })
                                 .collect::<Vec<_>>();
                             Some(lsp_types::PublishDiagnosticsParams {
                                 uri: url,
@@ -778,9 +823,10 @@ fn publish_and_initialize_state_for_diagnostics_for_projects_in_workspace(
 fn publish_and_update_state_for_diagnostics_for_document(
     connection: &lsp_server::Connection,
     configured_gren_path: Option<&str>,
+    diagnostic_message_capability: DiagnosticMessageCapability,
     project_path: &std::path::Path,
     project: &mut ProjectState,
-    removed_paths: impl Iterator<Item = lsp_types::Url>,
+    removed_paths: impl Iterator<Item = lsp_types::Uri>,
 ) {
     match compute_diagnostics(configured_gren_path, project_path, project) {
         Err(error) => {
@@ -799,7 +845,12 @@ fn publish_and_update_state_for_diagnostics_for_document(
                         let diagnostics: Vec<lsp_types::Diagnostic> = new
                             .problems
                             .iter()
-                            .map(gren_make_file_problem_to_diagnostic)
+                            .map(|problem| {
+                                gren_make_file_problem_to_diagnostic(
+                                    problem,
+                                    diagnostic_message_capability,
+                                )
+                            })
                             .collect::<Vec<_>>();
                         Some(diagnostics)
                     }
@@ -812,7 +863,7 @@ fn publish_and_update_state_for_diagnostics_for_document(
                     }
                 };
                 if let Some(updated_diagnostics) = maybe_updated_diagnostics
-                    && let Ok(url) = lsp_types::Url::from_file_path(gren_make_file_error)
+                    && let Ok(url) = lsp_types::Uri::from_file_path(gren_make_file_error)
                 {
                     updated_diagnostics_to_publish.push(lsp_types::PublishDiagnosticsParams {
                         uri: url,
@@ -829,7 +880,7 @@ fn publish_and_update_state_for_diagnostics_for_document(
                 });
             }
             if let Ok(gren_json_url) =
-                lsp_types::Url::from_file_path(std::path::Path::join(project_path, "gren.json"))
+                lsp_types::Uri::from_file_path(std::path::Path::join(project_path, "gren.json"))
             {
                 if let Some(gren_make_error_for_gren_json) =
                     gren_make_errors.iter().find(|&file_error| {
@@ -841,7 +892,12 @@ fn publish_and_update_state_for_diagnostics_for_document(
                         diagnostics: gren_make_error_for_gren_json
                             .problems
                             .iter()
-                            .map(gren_make_file_problem_to_diagnostic)
+                            .map(|problem| {
+                                gren_make_file_problem_to_diagnostic(
+                                    problem,
+                                    diagnostic_message_capability,
+                                )
+                            })
                             .collect::<Vec<_>>(),
                         version: None,
                     });
@@ -929,21 +985,20 @@ struct GrenMakeFileCompileError {
 struct GrenMakeFileInternalCompileProblem {
     title: Box<str>,
     range: lsp_types::Range,
-    message_markdown: String,
+    message_markdown: Vec<GrenMakeMessageSegment>,
 }
-#[derive(Debug, Clone, Copy)]
-enum GrenMakeMessageSegment<'a> {
-    Plain(&'a str),
+#[derive(Debug, Clone)]
+enum GrenMakeMessageSegment {
+    Plain(String),
     Colored {
         underline: bool,
         bold: bool,
-        color: Option<&'a str>,
-        text: &'a str,
+        color: Option<String>,
+        text: String,
     },
 }
-
-fn gren_make_message_segments_to_markdown(
-    gren_make_message_segments: Vec<GrenMakeMessageSegment>,
+fn gren_make_message_segments_to_diagnostic_markdown(
+    gren_make_message_segments: &[GrenMakeMessageSegment],
 ) -> String {
     let mut builder: String = String::new();
     for gren_make_message_segment in gren_make_message_segments {
@@ -957,10 +1012,42 @@ fn gren_make_message_segments_to_markdown(
                 color: maybe_color,
                 text,
             } => {
-                // https://github.com/microsoft/vscode/issues/54272
+                if let Some(_color) = maybe_color {
+                    builder.push('_');
+                    builder.push_str(text);
+                    builder.push('_');
+                } else if *bold || *underline {
+                    builder.push('*');
+                    builder.push_str(text);
+                    builder.push('*');
+                } else {
+                    // suspicious, would have expected ::Plain
+                    builder.push_str(text);
+                }
+            }
+        }
+    }
+    builder
+}
+fn gren_make_message_segments_to_diagnostic_plain(
+    gren_make_message_segments: &[GrenMakeMessageSegment],
+) -> String {
+    let mut builder: String = String::new();
+    for gren_make_message_segment in gren_make_message_segments {
+        match gren_make_message_segment {
+            GrenMakeMessageSegment::Plain(text) => {
+                builder.push_str(text);
+            }
+            GrenMakeMessageSegment::Colored {
+                underline,
+                bold,
+                color: maybe_color,
+                text,
+            } => {
                 if let Some(_color) = maybe_color {
                     builder.push_str(text);
-                } else if bold || underline {
+                } else if *bold || *underline {
+                    // this doesn't cut it if non-letters are highlighted
                     builder.push_str(&text.to_ascii_uppercase());
                 } else {
                     // suspicious, would have expected ::Plain
@@ -992,7 +1079,7 @@ fn parse_gren_make_report(
                 .get("title")
                 .and_then(serde_json::Value::as_str)
                 .ok_or_else(|| format!("report title must be string. Full report: {json}"))?;
-            let message: String = json
+            let message = json
                 .get("message")
                 .ok_or_else(|| format!("report file message field missing. Full report: {json}"))
                 .and_then(parse_gren_make_message)?;
@@ -1055,16 +1142,16 @@ fn parse_gren_make_path<'a>(json: &'a serde_json::Value) -> Result<&'a str, Stri
         .map(|path| if path.is_empty() { "gren.json" } else { path })
         .ok_or_else(|| "path must be a string or null".to_string())
 }
-fn parse_gren_make_message(json: &serde_json::Value) -> Result<String, String> {
+fn parse_gren_make_message(
+    json: &serde_json::Value,
+) -> Result<Vec<GrenMakeMessageSegment>, String> {
     match serde_json::Value::as_array(json) {
-        Some(message_segments) => Ok(gren_make_message_segments_to_markdown(
-            message_segments
-                .iter()
-                .map(parse_gren_make_message_segment)
-                .collect::<Result<Vec<GrenMakeMessageSegment>, _>>()?,
-        )),
+        Some(message_segments) => Ok(message_segments
+            .iter()
+            .map(parse_gren_make_message_segment)
+            .collect::<Result<Vec<GrenMakeMessageSegment>, _>>()?),
         None => match serde_json::Value::as_str(json) {
-            Some(message) => Ok(message.to_string()),
+            Some(message) => Ok(vec![GrenMakeMessageSegment::Plain(message.to_string())]),
             None => Err("report file message must be an array or a string".to_string()),
         },
     }
@@ -1101,11 +1188,11 @@ fn parse_gren_make_position_as_lsp_position(
         character: (column_1_based - 1) as u32,
     })
 }
-fn parse_gren_make_message_segment<'a>(
-    json: &'a serde_json::Value,
-) -> Result<GrenMakeMessageSegment<'a>, String> {
+fn parse_gren_make_message_segment(
+    json: &serde_json::Value,
+) -> Result<GrenMakeMessageSegment, String> {
     match json {
-        serde_json::Value::String(plain) => Ok(GrenMakeMessageSegment::Plain(plain)),
+        serde_json::Value::String(plain) => Ok(GrenMakeMessageSegment::Plain(plain.to_string())),
         serde_json::Value::Object(fields_json) => {
             let text: &str = fields_json
                 .get("string")
@@ -1123,8 +1210,8 @@ fn parse_gren_make_message_segment<'a>(
             Ok(GrenMakeMessageSegment::Colored {
                 underline: underline,
                 bold: bold,
-                color: color,
-                text: text,
+                color: color.map(|color| color.to_string()),
+                text: text.to_string(),
             })
         }
         _ => Err(format!(
@@ -1750,7 +1837,7 @@ struct ProjectModuleState<'a> {
 
 fn state_get_project_module_by_lsp_url<'a>(
     state: &'a State,
-    uri: &lsp_types::Url,
+    uri: &lsp_types::Uri,
 ) -> Option<ProjectModuleState<'a>> {
     let file_path: std::path::PathBuf = uri.to_file_path().ok()?;
     state_get_project_module_by_path(state, &file_path)
@@ -1813,11 +1900,11 @@ fn respond_to_hover(
                 hovered_project_module_state.project,
                 hovered_module_name,
             )?;
-            let origin_module_url: lsp_types::Url =
-                lsp_types::Url::from_file_path(origin_module_path).ok()?;
+            let origin_module_url: lsp_types::Uri =
+                lsp_types::Uri::from_file_path(origin_module_path).ok()?;
             // also show list of exports maybe?
             Some(lsp_types::Hover {
-                contents: lsp_types::HoverContents::Markup(lsp_types::MarkupContent {
+                contents: lsp_types::Contents::MarkupContent(lsp_types::MarkupContent {
                     kind: lsp_types::MarkupKind::Markdown,
                     value: match &origin_module_state.syntax.documentation {
                         None => "_module has no documentation comment_".to_string(),
@@ -2045,7 +2132,7 @@ fn respond_to_hover(
                     }
                 })?;
             Some(lsp_types::Hover {
-                contents: lsp_types::HoverContents::Markup(lsp_types::MarkupContent {
+                contents: lsp_types::Contents::MarkupContent(lsp_types::MarkupContent {
                     kind: lsp_types::MarkupKind::Markdown,
                     value: origin_declaration_info_markdown,
                 }),
@@ -2215,7 +2302,7 @@ fn respond_to_hover(
                 ),
             };
             Some(lsp_types::Hover {
-                contents: lsp_types::HoverContents::Markup(lsp_types::MarkupContent {
+                contents: lsp_types::Contents::MarkupContent(lsp_types::MarkupContent {
                     kind: lsp_types::MarkupKind::Markdown,
                     value: origin_declaration_info_markdown,
                 }),
@@ -2429,7 +2516,7 @@ fn respond_to_hover(
                     },
                 )?;
             Some(lsp_types::Hover {
-                contents: lsp_types::HoverContents::Markup(lsp_types::MarkupContent {
+                contents: lsp_types::Contents::MarkupContent(lsp_types::MarkupContent {
                     kind: lsp_types::MarkupKind::Markdown,
                     value: origin_declaration_info_markdown,
                 }),
@@ -2442,7 +2529,7 @@ fn respond_to_hover(
             scope: _,
             local_bindings: _,
         } => Some(lsp_types::Hover {
-            contents: lsp_types::HoverContents::Markup(lsp_types::MarkupContent {
+            contents: lsp_types::Contents::MarkupContent(lsp_types::MarkupContent {
                 kind: lsp_types::MarkupKind::Markdown,
                 value: local_binding_info_markdown(
                     state,
@@ -2652,7 +2739,7 @@ fn respond_to_hover(
                     }
                 })?;
             Some(lsp_types::Hover {
-                contents: lsp_types::HoverContents::Markup(lsp_types::MarkupContent {
+                contents: lsp_types::Contents::MarkupContent(lsp_types::MarkupContent {
                     kind: lsp_types::MarkupKind::Markdown,
                     value: origin_declaration_info_markdown,
                 }),
@@ -2767,7 +2854,7 @@ fn respond_to_hover(
                 },
             )?;
             Some(lsp_types::Hover {
-                contents: lsp_types::HoverContents::Markup(lsp_types::MarkupContent {
+                contents: lsp_types::Contents::MarkupContent(lsp_types::MarkupContent {
                     kind: lsp_types::MarkupKind::Markdown,
                     value: info_markdown,
                 }),
@@ -2848,8 +2935,8 @@ fn let_declaration_info_markdown(
 
 fn respond_to_goto_definition(
     state: &State,
-    goto_definition_arguments: lsp_types::GotoDefinitionParams,
-) -> Option<lsp_types::GotoDefinitionResponse> {
+    goto_definition_arguments: lsp_types::DefinitionParams,
+) -> Option<lsp_types::DefinitionResponse> {
     let goto_symbol_project_module_state = state_get_project_module_by_lsp_url(
         state,
         &goto_definition_arguments
@@ -2887,14 +2974,14 @@ fn respond_to_goto_definition(
                         .find(|origin_choice_type_parameter| {
                             origin_choice_type_parameter.value.as_ref() == goto_type_variable_name
                         })?;
-                    Some(lsp_types::GotoDefinitionResponse::Scalar(
-                        lsp_types::Location {
+                    Some(lsp_types::DefinitionResponse::Definition(
+                        lsp_types::Definition::Location(lsp_types::Location {
                             uri: goto_definition_arguments
                                 .text_document_position_params
                                 .text_document
                                 .uri,
                             range: goto_type_variable_name_origin_parameter_node.range,
-                        },
+                        }),
                     ))
                 }
                 GrenSyntaxDeclaration::TypeAlias {
@@ -2909,14 +2996,14 @@ fn respond_to_goto_definition(
                         .find(|origin_choice_type_parameter| {
                             origin_choice_type_parameter.value.as_ref() == goto_type_variable_name
                         })?;
-                    Some(lsp_types::GotoDefinitionResponse::Scalar(
-                        lsp_types::Location {
+                    Some(lsp_types::DefinitionResponse::Definition(
+                        lsp_types::Definition::Location(lsp_types::Location {
                             uri: goto_definition_arguments
                                 .text_document_position_params
                                 .text_document
                                 .uri,
                             range: goto_type_variable_name_origin_parameter_node.range,
-                        },
+                        }),
                     ))
                 }
                 GrenSyntaxDeclaration::Variable { .. }
@@ -2938,10 +3025,10 @@ fn respond_to_goto_definition(
                     goto_symbol_project_module_state.project,
                     goto_module_name,
                 )?;
-            let origin_module_file_url: lsp_types::Url =
-                lsp_types::Url::from_file_path(origin_module_file_path).ok()?;
-            Some(lsp_types::GotoDefinitionResponse::Scalar(
-                lsp_types::Location {
+            let origin_module_file_url: lsp_types::Uri =
+                lsp_types::Uri::from_file_path(origin_module_file_path).ok()?;
+            Some(lsp_types::DefinitionResponse::Definition(
+                lsp_types::Definition::Location(lsp_types::Location {
                     uri: origin_module_file_url,
                     range: match &origin_module_state.syntax.header {
                         Some(module_header) => match &module_header.module_name {
@@ -2971,7 +3058,7 @@ fn respond_to_goto_definition(
                             },
                         },
                     },
-                },
+                }),
             ))
         }
         GrenSyntaxSymbol::ImportAlias {
@@ -2984,10 +3071,10 @@ fn respond_to_goto_definition(
                     goto_symbol_project_module_state.project,
                     goto_module_name,
                 )?;
-            let origin_module_file_url: lsp_types::Url =
-                lsp_types::Url::from_file_path(origin_module_file_path).ok()?;
-            Some(lsp_types::GotoDefinitionResponse::Scalar(
-                lsp_types::Location {
+            let origin_module_file_url: lsp_types::Uri =
+                lsp_types::Uri::from_file_path(origin_module_file_path).ok()?;
+            Some(lsp_types::DefinitionResponse::Definition(
+                lsp_types::Definition::Location(lsp_types::Location {
                     uri: origin_module_file_url,
                     range: match &origin_module_state.syntax.header {
                         Some(module_header) => match &module_header.module_name {
@@ -3017,7 +3104,7 @@ fn respond_to_goto_definition(
                             },
                         },
                     },
-                },
+                }),
             ))
         }
         GrenSyntaxSymbol::ModuleHeaderExpose {
@@ -3110,14 +3197,14 @@ fn respond_to_goto_definition(
                         }
                     }
                 })?;
-            Some(lsp_types::GotoDefinitionResponse::Scalar(
-                lsp_types::Location {
+            Some(lsp_types::DefinitionResponse::Definition(
+                lsp_types::Definition::Location(lsp_types::Location {
                     uri: goto_definition_arguments
                         .text_document_position_params
                         .text_document
                         .uri,
                     range: declaration_name_range,
-                },
+                }),
             ))
         }
         GrenSyntaxSymbol::ImportExpose {
@@ -3131,8 +3218,8 @@ fn respond_to_goto_definition(
                     goto_symbol_project_module_state.project,
                     goto_module_origin,
                 )?;
-            let origin_module_file_url: lsp_types::Url =
-                lsp_types::Url::from_file_path(origin_module_file_path).ok()?;
+            let origin_module_file_url: lsp_types::Uri =
+                lsp_types::Uri::from_file_path(origin_module_file_path).ok()?;
             let declaration_name_range: lsp_types::Range = origin_module_state
                 .syntax
                 .declarations
@@ -3207,11 +3294,11 @@ fn respond_to_goto_definition(
                         }
                     }
                 })?;
-            Some(lsp_types::GotoDefinitionResponse::Scalar(
-                lsp_types::Location {
+            Some(lsp_types::DefinitionResponse::Definition(
+                lsp_types::Definition::Location(lsp_types::Location {
                     uri: origin_module_file_url,
                     range: declaration_name_range,
-                },
+                }),
             ))
         }
 
@@ -3220,8 +3307,8 @@ fn respond_to_goto_definition(
             origin: goto_origin,
             scope: _,
             local_bindings: _,
-        } => Some(lsp_types::GotoDefinitionResponse::Scalar(
-            lsp_types::Location {
+        } => Some(lsp_types::DefinitionResponse::Definition(
+            lsp_types::Definition::Location(lsp_types::Location {
                 uri: goto_definition_arguments
                     .text_document_position_params
                     .text_document
@@ -3234,7 +3321,7 @@ fn respond_to_goto_definition(
                         start_name_range,
                     } => start_name_range,
                 },
-            },
+            }),
         )),
         GrenSyntaxSymbol::VariableOrVariantOrOperator {
             qualification: goto_qualification,
@@ -3258,8 +3345,8 @@ fn respond_to_goto_definition(
                     goto_symbol_project_module_state.project,
                     goto_module_origin,
                 )?;
-            let origin_module_file_url: lsp_types::Url =
-                lsp_types::Url::from_file_path(origin_module_file_path).ok()?;
+            let origin_module_file_url: lsp_types::Uri =
+                lsp_types::Uri::from_file_path(origin_module_file_path).ok()?;
             let declaration_name_range: lsp_types::Range = origin_module_state
                 .syntax
                 .declarations
@@ -3341,11 +3428,11 @@ fn respond_to_goto_definition(
                         }
                     }
                 })?;
-            Some(lsp_types::GotoDefinitionResponse::Scalar(
-                lsp_types::Location {
+            Some(lsp_types::DefinitionResponse::Definition(
+                lsp_types::Definition::Location(lsp_types::Location {
                     uri: origin_module_file_url,
                     range: declaration_name_range,
-                },
+                }),
             ))
         }
         GrenSyntaxSymbol::Type {
@@ -3369,8 +3456,8 @@ fn respond_to_goto_definition(
                     goto_symbol_project_module_state.project,
                     goto_module_origin,
                 )?;
-            let origin_module_file_url: lsp_types::Url =
-                lsp_types::Url::from_file_path(origin_module_file_path).ok()?;
+            let origin_module_file_url: lsp_types::Uri =
+                lsp_types::Uri::from_file_path(origin_module_file_path).ok()?;
             let declaration_name_range: lsp_types::Range = origin_module_state
                 .syntax
                 .declarations
@@ -3403,11 +3490,11 @@ fn respond_to_goto_definition(
                         | GrenSyntaxDeclaration::Variable { .. } => None,
                     }
                 })?;
-            Some(lsp_types::GotoDefinitionResponse::Scalar(
-                lsp_types::Location {
+            Some(lsp_types::DefinitionResponse::Definition(
+                lsp_types::Definition::Location(lsp_types::Location {
                     uri: origin_module_file_url,
                     range: declaration_name_range,
-                },
+                }),
             ))
         }
     }
@@ -3415,28 +3502,39 @@ fn respond_to_goto_definition(
 
 fn respond_to_prepare_rename(
     state: &State,
-    prepare_rename_arguments: &lsp_types::TextDocumentPositionParams,
-) -> Option<Result<lsp_types::PrepareRenameResponse, lsp_server::ResponseError>> {
-    let project_module_state =
-        state_get_project_module_by_lsp_url(state, &prepare_rename_arguments.text_document.uri)?;
+    prepare_rename_arguments: &lsp_types::PrepareRenameParams,
+) -> Option<Result<lsp_types::PrepareRenameResult, lsp_server::ResponseError>> {
+    let project_module_state = state_get_project_module_by_lsp_url(
+        state,
+        &prepare_rename_arguments
+            .text_document_position_params
+            .text_document
+            .uri,
+    )?;
     let prepare_rename_symbol_node: GrenSyntaxNode<GrenSyntaxSymbol> =
         gren_syntax_module_find_symbol_at_position(
             &project_module_state.module.syntax,
-            prepare_rename_arguments.position,
+            prepare_rename_arguments
+                .text_document_position_params
+                .position,
         )?;
     Some(match prepare_rename_symbol_node.value {
         GrenSyntaxSymbol::ImportAlias {
             module_origin: _,
             alias_name,
-        } => Ok(lsp_types::PrepareRenameResponse::RangeWithPlaceholder {
-            range: prepare_rename_symbol_node.range,
-            placeholder: alias_name.to_string(),
-        }),
-        GrenSyntaxSymbol::ModuleName(module_name) => {
-            Ok(lsp_types::PrepareRenameResponse::RangeWithPlaceholder {
+        } => Ok(lsp_types::PrepareRenameResult::PrepareRenamePlaceholder(
+            lsp_types::PrepareRenamePlaceholder {
                 range: prepare_rename_symbol_node.range,
-                placeholder: module_name.to_string(),
-            })
+                placeholder: alias_name.to_string(),
+            },
+        )),
+        GrenSyntaxSymbol::ModuleName(module_name) => {
+            Ok(lsp_types::PrepareRenameResult::PrepareRenamePlaceholder(
+                lsp_types::PrepareRenamePlaceholder {
+                    range: prepare_rename_symbol_node.range,
+                    placeholder: module_name.to_string(),
+                },
+            ))
         }
         GrenSyntaxSymbol::ModuleHeaderExpose {
             name,
@@ -3459,10 +3557,12 @@ fn respond_to_prepare_rename(
         | GrenSyntaxSymbol::TypeVariable {
             scope_declaration: _,
             name,
-        } => Ok(lsp_types::PrepareRenameResponse::RangeWithPlaceholder {
-            range: prepare_rename_symbol_node.range,
-            placeholder: name.to_string(),
-        }),
+        } => Ok(lsp_types::PrepareRenameResult::PrepareRenamePlaceholder(
+            lsp_types::PrepareRenamePlaceholder {
+                range: prepare_rename_symbol_node.range,
+                placeholder: name.to_string(),
+            },
+        )),
         GrenSyntaxSymbol::LocalVariable {
             name,
             origin: prepare_rename_origin,
@@ -3471,10 +3571,12 @@ fn respond_to_prepare_rename(
         } => match prepare_rename_origin {
             LocalBindingOrigin::PatternVariable(_)
             | LocalBindingOrigin::LetDeclaredVariable { .. } => {
-                Ok(lsp_types::PrepareRenameResponse::RangeWithPlaceholder {
-                    range: prepare_rename_symbol_node.range,
-                    placeholder: name.to_string(),
-                })
+                Ok(lsp_types::PrepareRenameResult::PrepareRenamePlaceholder(
+                    lsp_types::PrepareRenamePlaceholder {
+                        range: prepare_rename_symbol_node.range,
+                        placeholder: name.to_string(),
+                    },
+                ))
             }
             LocalBindingOrigin::PatternRecordField(_) => {
                 // TODO consider supporting it (by keeping the old field name but assigning a variable)
@@ -3489,29 +3591,33 @@ fn respond_to_prepare_rename(
             qualification: _,
             name,
             local_bindings: _,
-        } => Ok(lsp_types::PrepareRenameResponse::RangeWithPlaceholder {
-            range: lsp_types::Range {
-                start: lsp_position_add_characters(
-                    prepare_rename_symbol_node.range.end,
-                    -(name.len() as i32),
-                ),
-                end: prepare_rename_symbol_node.range.end,
+        } => Ok(lsp_types::PrepareRenameResult::PrepareRenamePlaceholder(
+            lsp_types::PrepareRenamePlaceholder {
+                range: lsp_types::Range {
+                    start: lsp_position_add_characters(
+                        prepare_rename_symbol_node.range.end,
+                        -(name.len() as i32),
+                    ),
+                    end: prepare_rename_symbol_node.range.end,
+                },
+                placeholder: name.to_string(),
             },
-            placeholder: name.to_string(),
-        }),
+        )),
         GrenSyntaxSymbol::Type {
             qualification: _,
             name,
-        } => Ok(lsp_types::PrepareRenameResponse::RangeWithPlaceholder {
-            range: lsp_types::Range {
-                start: lsp_position_add_characters(
-                    prepare_rename_symbol_node.range.end,
-                    -(name.len() as i32),
-                ),
-                end: prepare_rename_symbol_node.range.end,
+        } => Ok(lsp_types::PrepareRenameResult::PrepareRenamePlaceholder(
+            lsp_types::PrepareRenamePlaceholder {
+                range: lsp_types::Range {
+                    start: lsp_position_add_characters(
+                        prepare_rename_symbol_node.range.end,
+                        -(name.len() as i32),
+                    ),
+                    end: prepare_rename_symbol_node.range.end,
+                },
+                placeholder: name.to_string(),
             },
-            placeholder: name.to_string(),
-        }),
+        )),
     })
 }
 
@@ -3539,15 +3645,18 @@ fn state_iter_all_modules<'a>(
 fn respond_to_rename(
     state: &State,
     rename_arguments: lsp_types::RenameParams,
-) -> Option<Vec<lsp_types::TextDocumentEdit>> {
+) -> Option<Vec<lsp_types::DocumentChange>> {
     let to_rename_project_module_state = state_get_project_module_by_lsp_url(
         state,
-        &rename_arguments.text_document_position.text_document.uri,
+        &rename_arguments
+            .text_document_position_params
+            .text_document
+            .uri,
     )?;
     let symbol_to_rename_node: GrenSyntaxNode<GrenSyntaxSymbol> =
         gren_syntax_module_find_symbol_at_position(
             &to_rename_project_module_state.module.syntax,
-            rename_arguments.text_document_position.position,
+            rename_arguments.text_document_position_params.position,
         )?;
     Some(match symbol_to_rename_node.value {
         GrenSyntaxSymbol::ImportAlias {
@@ -3565,21 +3674,28 @@ fn respond_to_rename(
                     alias_name: import_alias_to_rename,
                 },
             );
-            vec![lsp_types::TextDocumentEdit {
-                text_document: lsp_types::OptionalVersionedTextDocumentIdentifier {
-                    uri: rename_arguments.text_document_position.text_document.uri,
-                    version: None,
-                },
-                edits: all_uses_of_renamed_import_alias
-                    .into_iter()
-                    .map(|use_range_of_renamed_module| {
-                        lsp_types::OneOf::Left(lsp_types::TextEdit {
-                            range: use_range_of_renamed_module,
-                            new_text: rename_arguments.new_name.clone(),
+            vec![lsp_types::DocumentChange::TextDocumentEdit(
+                lsp_types::TextDocumentEdit {
+                    text_document: lsp_types::OptionalVersionedTextDocumentIdentifier {
+                        text_document_identifier: lsp_types::TextDocumentIdentifier {
+                            uri: rename_arguments
+                                .text_document_position_params
+                                .text_document
+                                .uri,
+                        },
+                        version: None,
+                    },
+                    edits: all_uses_of_renamed_import_alias
+                        .into_iter()
+                        .map(|use_range_of_renamed_module| {
+                            lsp_types::Edit::TextEdit(lsp_types::TextEdit {
+                                range: use_range_of_renamed_module,
+                                new_text: rename_arguments.new_name.clone(),
+                            })
                         })
-                    })
-                    .collect::<Vec<_>>(),
-            }]
+                        .collect::<Vec<_>>(),
+                },
+            )]
         }
         GrenSyntaxSymbol::TypeVariable {
             scope_declaration,
@@ -3604,21 +3720,28 @@ fn respond_to_rename(
                 scope_declaration,
                 GrenSymbolToReference::TypeVariable(type_variable_to_rename),
             );
-            vec![lsp_types::TextDocumentEdit {
-                text_document: lsp_types::OptionalVersionedTextDocumentIdentifier {
-                    uri: rename_arguments.text_document_position.text_document.uri,
-                    version: None,
-                },
-                edits: all_uses_of_renamed_type_variable
-                    .into_iter()
-                    .map(|use_range_of_renamed_module| {
-                        lsp_types::OneOf::Left(lsp_types::TextEdit {
-                            range: use_range_of_renamed_module,
-                            new_text: rename_arguments.new_name.clone(),
+            vec![lsp_types::DocumentChange::TextDocumentEdit(
+                lsp_types::TextDocumentEdit {
+                    text_document: lsp_types::OptionalVersionedTextDocumentIdentifier {
+                        text_document_identifier: lsp_types::TextDocumentIdentifier {
+                            uri: rename_arguments
+                                .text_document_position_params
+                                .text_document
+                                .uri,
+                        },
+                        version: None,
+                    },
+                    edits: all_uses_of_renamed_type_variable
+                        .into_iter()
+                        .map(|use_range_of_renamed_module| {
+                            lsp_types::Edit::TextEdit(lsp_types::TextEdit {
+                                range: use_range_of_renamed_module,
+                                new_text: rename_arguments.new_name.clone(),
+                            })
                         })
-                    })
-                    .collect::<Vec<_>>(),
-            }]
+                        .collect::<Vec<_>>(),
+                },
+            )]
         }
         GrenSyntaxSymbol::LocalVariable {
             name: to_rename_name,
@@ -3664,28 +3787,35 @@ fn respond_to_rename(
                     }
                 }
             }
-            vec![lsp_types::TextDocumentEdit {
-                text_document: lsp_types::OptionalVersionedTextDocumentIdentifier {
-                    uri: rename_arguments.text_document_position.text_document.uri,
-                    version: None,
-                },
-                edits: all_uses_of_to_rename
-                    .into_iter()
-                    .map(|use_range_of_renamed_module| {
-                        lsp_types::OneOf::Left(lsp_types::TextEdit {
-                            range: use_range_of_renamed_module,
-                            new_text: rename_arguments.new_name.clone(),
+            vec![lsp_types::DocumentChange::TextDocumentEdit(
+                lsp_types::TextDocumentEdit {
+                    text_document: lsp_types::OptionalVersionedTextDocumentIdentifier {
+                        text_document_identifier: lsp_types::TextDocumentIdentifier {
+                            uri: rename_arguments
+                                .text_document_position_params
+                                .text_document
+                                .uri,
+                        },
+                        version: None,
+                    },
+                    edits: all_uses_of_to_rename
+                        .into_iter()
+                        .map(|use_range_of_renamed_module| {
+                            lsp_types::Edit::TextEdit(lsp_types::TextEdit {
+                                range: use_range_of_renamed_module,
+                                new_text: rename_arguments.new_name.clone(),
+                            })
                         })
-                    })
-                    .collect::<Vec<_>>(),
-            }]
+                        .collect::<Vec<_>>(),
+                },
+            )]
         }
         GrenSyntaxSymbol::ModuleName(module_name_to_rename) => state
             .projects
             .values()
             .flat_map(|project| project.modules.iter())
             .filter_map(|(gren_module_file_path, gren_module_state)| {
-                let gren_module_uri = lsp_types::Url::from_file_path(gren_module_file_path).ok()?;
+                let gren_module_uri = lsp_types::Uri::from_file_path(gren_module_file_path).ok()?;
                 let mut all_uses_of_renamed_module_name: Vec<lsp_types::Range> = Vec::new();
                 gren_syntax_module_uses_of_reference_into(
                     &mut all_uses_of_renamed_module_name,
@@ -3694,21 +3824,25 @@ fn respond_to_rename(
                     &gren_module_state.syntax,
                     GrenSymbolToReference::ModuleName(module_name_to_rename),
                 );
-                Some(lsp_types::TextDocumentEdit {
-                    text_document: lsp_types::OptionalVersionedTextDocumentIdentifier {
-                        uri: gren_module_uri,
-                        version: None,
-                    },
-                    edits: all_uses_of_renamed_module_name
-                        .into_iter()
-                        .map(|use_range_of_renamed_module| {
-                            lsp_types::OneOf::Left(lsp_types::TextEdit {
-                                range: use_range_of_renamed_module,
-                                new_text: rename_arguments.new_name.clone(),
+                Some(lsp_types::DocumentChange::TextDocumentEdit(
+                    lsp_types::TextDocumentEdit {
+                        text_document: lsp_types::OptionalVersionedTextDocumentIdentifier {
+                            text_document_identifier: lsp_types::TextDocumentIdentifier {
+                                uri: gren_module_uri,
+                            },
+                            version: None,
+                        },
+                        edits: all_uses_of_renamed_module_name
+                            .into_iter()
+                            .map(|use_range_of_renamed_module| {
+                                lsp_types::Edit::TextEdit(lsp_types::TextEdit {
+                                    range: use_range_of_renamed_module,
+                                    new_text: rename_arguments.new_name.clone(),
+                                })
                             })
-                        })
-                        .collect::<Vec<_>>(),
-                })
+                            .collect::<Vec<_>>(),
+                    },
+                ))
             })
             .collect::<Vec<_>>(),
         GrenSyntaxSymbol::ModuleMemberDeclarationName {
@@ -3870,7 +4004,7 @@ fn renames(
     state: &State,
     symbol: GrenSymbolToReference,
     new_name: String,
-) -> Vec<lsp_types::TextDocumentEdit> {
+) -> Vec<lsp_types::DocumentChange> {
     state_iter_all_modules(state)
         .filter_map(|project_module| {
             if project_module
@@ -3890,23 +4024,27 @@ fn renames(
             if all_uses.is_empty() {
                 return None;
             }
-            let gren_module_uri: lsp_types::Url =
-                lsp_types::Url::from_file_path(&project_module.module_path).ok()?;
-            Some(lsp_types::TextDocumentEdit {
-                text_document: lsp_types::OptionalVersionedTextDocumentIdentifier {
-                    uri: gren_module_uri,
-                    version: None,
-                },
-                edits: all_uses
-                    .into_iter()
-                    .map(|use_range_of_renamed_module| {
-                        lsp_types::OneOf::Left(lsp_types::TextEdit {
-                            range: use_range_of_renamed_module,
-                            new_text: new_name.clone(),
+            let gren_module_uri: lsp_types::Uri =
+                lsp_types::Uri::from_file_path(&project_module.module_path).ok()?;
+            Some(lsp_types::DocumentChange::TextDocumentEdit(
+                lsp_types::TextDocumentEdit {
+                    text_document: lsp_types::OptionalVersionedTextDocumentIdentifier {
+                        text_document_identifier: lsp_types::TextDocumentIdentifier {
+                            uri: gren_module_uri,
+                        },
+                        version: None,
+                    },
+                    edits: all_uses
+                        .into_iter()
+                        .map(|use_range_of_renamed_module| {
+                            lsp_types::Edit::TextEdit(lsp_types::TextEdit {
+                                range: use_range_of_renamed_module,
+                                new_text: new_name.clone(),
+                            })
                         })
-                    })
-                    .collect::<Vec<_>>(),
-            })
+                        .collect::<Vec<_>>(),
+                },
+            ))
         })
         .collect::<Vec<_>>()
 }
@@ -3917,14 +4055,14 @@ fn respond_to_references(
     let to_find_project_module_state = state_get_project_module_by_lsp_url(
         state,
         &references_arguments
-            .text_document_position
+            .text_document_position_params
             .text_document
             .uri,
     )?;
     let symbol_to_find_node: GrenSyntaxNode<GrenSyntaxSymbol> =
         gren_syntax_module_find_symbol_at_position(
             &to_find_project_module_state.module.syntax,
-            references_arguments.text_document_position.position,
+            references_arguments.text_document_position_params.position,
         )?;
     Some(match symbol_to_find_node.value {
         GrenSyntaxSymbol::ImportAlias {
@@ -3975,7 +4113,7 @@ fn respond_to_references(
                 .into_iter()
                 .map(|use_range_of_found_module| lsp_types::Location {
                     uri: references_arguments
-                        .text_document_position
+                        .text_document_position_params
                         .text_document
                         .uri
                         .clone(),
@@ -4010,7 +4148,7 @@ fn respond_to_references(
                 .into_iter()
                 .map(|use_range_of_found_module| lsp_types::Location {
                     uri: references_arguments
-                        .text_document_position
+                        .text_document_position_params
                         .text_document
                         .uri
                         .clone(),
@@ -4042,7 +4180,7 @@ fn respond_to_references(
                     &gren_module_state.syntax,
                     GrenSymbolToReference::ModuleName(module_name_to_find),
                 );
-                lsp_types::Url::from_file_path(gren_module_file_path)
+                lsp_types::Uri::from_file_path(gren_module_file_path)
                     .ok()
                     .map(|gren_module_uri| {
                         all_uses_of_found_module_name.into_iter().map(
@@ -4092,7 +4230,7 @@ fn respond_to_references(
                 .modules
                 .iter()
                 .flat_map(move |(project_module_path, project_module_state)| {
-                    lsp_types::Url::from_file_path(project_module_path)
+                    lsp_types::Uri::from_file_path(project_module_path)
                         .ok()
                         .map(|gren_module_uri| {
                             let mut all_uses_of_found_at_docs_module_member: Vec<lsp_types::Range> =
@@ -4157,7 +4295,7 @@ fn respond_to_references(
                         &project_module_state.syntax,
                         gren_declared_symbol_to_find,
                     );
-                    lsp_types::Url::from_file_path(project_module_path)
+                    lsp_types::Uri::from_file_path(project_module_path)
                         .ok()
                         .map(|gren_module_uri| {
                             all_uses_of_found_module_member.into_iter().map(
@@ -4206,7 +4344,7 @@ fn respond_to_references(
                         &project_module_state.syntax,
                         gren_declared_symbol_to_find,
                     );
-                    lsp_types::Url::from_file_path(project_module_path)
+                    lsp_types::Uri::from_file_path(project_module_path)
                         .ok()
                         .map(|gren_module_uri| {
                             all_uses_of_found_import_exposed_member.into_iter().map(
@@ -4222,7 +4360,7 @@ fn respond_to_references(
                 .chain(if references_arguments.context.include_declaration {
                     Some(lsp_types::Location {
                         uri: references_arguments
-                            .text_document_position
+                            .text_document_position_params
                             .text_document
                             .uri,
                         range: symbol_to_find_node.range,
@@ -4281,7 +4419,7 @@ fn respond_to_references(
                 .into_iter()
                 .map(|use_range_of_found_module| lsp_types::Location {
                     uri: references_arguments
-                        .text_document_position
+                        .text_document_position_params
                         .text_document
                         .uri
                         .clone(),
@@ -4323,7 +4461,7 @@ fn respond_to_references(
                         &project_module_state.syntax,
                         symbol_to_find,
                     );
-                    lsp_types::Url::from_file_path(project_module_path)
+                    lsp_types::Uri::from_file_path(project_module_path)
                         .ok()
                         .map(|gren_module_uri| {
                             all_uses_of_found_reference.into_iter().map(
@@ -4371,7 +4509,7 @@ fn respond_to_references(
                         &project_module_state.syntax,
                         gren_declared_symbol_to_find,
                     );
-                    lsp_types::Url::from_file_path(project_module_path)
+                    lsp_types::Uri::from_file_path(project_module_path)
                         .ok()
                         .map(|gren_module_uri| {
                             all_uses_of_found_type.into_iter().map(
@@ -4392,79 +4530,74 @@ fn respond_to_references(
 fn respond_to_semantic_tokens_full(
     state: &State,
     semantic_tokens_arguments: &lsp_types::SemanticTokensParams,
-) -> Option<lsp_types::SemanticTokensResult> {
+) -> Option<lsp_types::SemanticTokens> {
     let project_module_state =
         state_get_project_module_by_lsp_url(state, &semantic_tokens_arguments.text_document.uri)?;
     let mut highlighting: Vec<GrenSyntaxNode<GrenSyntaxHighlightKind>> =
         Vec::with_capacity(project_module_state.module.source.len() / 16);
     gren_syntax_highlight_module_into(&mut highlighting, &project_module_state.module.syntax);
-    Some(lsp_types::SemanticTokensResult::Tokens(
-        lsp_types::SemanticTokens {
-            result_id: None,
-            data: highlighting
-                .into_iter()
-                .scan(
-                    lsp_types::Position {
-                        line: 0,
-                        character: 0,
-                    },
-                    |previous_start_location, segment| {
-                        if (segment.range.end.line != segment.range.start.line)
-                            || (segment.range.end.character < segment.range.start.character)
-                        {
-                            eprintln!(
-                                "bad highlight token range: must be single-line and positive {:?}",
-                                segment.range
-                            );
-                            return None;
+    Some(lsp_types::SemanticTokens {
+        result_id: None,
+        data: highlighting
+            .into_iter()
+            .scan(
+                lsp_types::Position {
+                    line: 0,
+                    character: 0,
+                },
+                |previous_start_location, segment| {
+                    if (segment.range.end.line != segment.range.start.line)
+                        || (segment.range.end.character < segment.range.start.character)
+                    {
+                        eprintln!(
+                            "bad highlight token range: must be single-line and positive {:?}",
+                            segment.range
+                        );
+                        return None;
+                    }
+                    match lsp_position_positive_delta(*previous_start_location, segment.range.start)
+                    {
+                        Err(error) => {
+                            eprintln!("bad highlight token order {error}");
+                            None
                         }
-                        match lsp_position_positive_delta(
-                            *previous_start_location,
-                            segment.range.start,
-                        ) {
-                            Err(error) => {
-                                eprintln!("bad highlight token order {error}");
-                                None
-                            }
-                            Ok(delta) => {
-                                let token = lsp_types::SemanticToken {
-                                    delta_line: delta.line,
-                                    delta_start: delta.character,
-                                    length: segment.range.end.character
-                                        - segment.range.start.character,
-                                    token_type: semantic_token_type_to_id(
-                                        &gren_syntax_highlight_kind_to_lsp_semantic_token_type(
-                                            &segment.value,
-                                        ),
+                        Ok(delta) => {
+                            let token = lsp_types::SemanticToken {
+                                delta_line: delta.line,
+                                delta_start: delta.character,
+                                length: segment.range.end.character - segment.range.start.character,
+                                token_type: semantic_token_type_to_id(
+                                    &gren_syntax_highlight_kind_to_lsp_semantic_token_type(
+                                        &segment.value,
                                     ),
-                                    token_modifiers_bitset: 0_u32,
-                                };
-                                segment.range.start.clone_into(previous_start_location);
-                                Some(token)
-                            }
+                                ),
+                                token_modifiers_bitset: 0_u32,
+                            };
+                            segment.range.start.clone_into(previous_start_location);
+                            Some(token)
                         }
-                    },
-                )
-                .collect::<Vec<lsp_types::SemanticToken>>(),
-        },
-    ))
+                    }
+                },
+            )
+            .collect::<Vec<lsp_types::SemanticToken>>(),
+    })
 }
 
-const token_types: [lsp_types::SemanticTokenType; 11] = [
-    lsp_types::SemanticTokenType::NUMBER,
-    lsp_types::SemanticTokenType::STRING,
-    lsp_types::SemanticTokenType::NAMESPACE,
-    lsp_types::SemanticTokenType::VARIABLE,
-    lsp_types::SemanticTokenType::TYPE,
-    lsp_types::SemanticTokenType::TYPE_PARAMETER,
-    lsp_types::SemanticTokenType::KEYWORD,
-    lsp_types::SemanticTokenType::ENUM_MEMBER,
-    lsp_types::SemanticTokenType::PROPERTY,
-    lsp_types::SemanticTokenType::COMMENT,
-    lsp_types::SemanticTokenType::FUNCTION,
+const token_types: [lsp_types::SemanticTokenTypes; 11] = [
+    lsp_types::SemanticTokenTypes::Number,
+    lsp_types::SemanticTokenTypes::String,
+    lsp_types::SemanticTokenTypes::Namespace,
+    lsp_types::SemanticTokenTypes::Variable,
+    lsp_types::SemanticTokenTypes::Type,
+    lsp_types::SemanticTokenTypes::TypeParameter,
+    lsp_types::SemanticTokenTypes::Keyword,
+    lsp_types::SemanticTokenTypes::EnumMember,
+    lsp_types::SemanticTokenTypes::Property,
+    lsp_types::SemanticTokenTypes::Comment,
+    lsp_types::SemanticTokenTypes::Function,
 ];
 
-fn semantic_token_type_to_id(semantic_token: &lsp_types::SemanticTokenType) -> u32 {
+fn semantic_token_type_to_id(semantic_token: &lsp_types::SemanticTokenTypes) -> u32 {
     token_types
         .iter()
         .enumerate()
@@ -4716,14 +4849,14 @@ fn respond_to_completion(
     let completion_project_module = state_get_project_module_by_lsp_url(
         state,
         &completion_arguments
-            .text_document_position
+            .text_document_position_params
             .text_document
             .uri,
     )?;
     let symbol_to_complete: GrenSyntaxNode<GrenSyntaxSymbol> =
         gren_syntax_module_find_symbol_at_position(
             &completion_project_module.module.syntax,
-            completion_arguments.text_document_position.position,
+            completion_arguments.text_document_position_params.position,
         )?;
     let maybe_completion_items: Option<Vec<lsp_types::CompletionItem>> = match symbol_to_complete
         .value
@@ -4801,7 +4934,7 @@ fn respond_to_completion(
                             {
                                 Some(vec![lsp_types::CompletionItem {
                                     label: previous_declaration_start_name_node.value.to_string(),
-                                    kind: Some(lsp_types::CompletionItemKind::FUNCTION),
+                                    kind: Some(lsp_types::CompletionItemKind::Function),
                                     documentation: None,
                                     ..lsp_types::CompletionItem::default()
                                 }])
@@ -4897,7 +5030,7 @@ fn respond_to_completion(
                                 );
                             completion_items.push(lsp_types::CompletionItem {
                                 label: choice_type_name_node.value.to_string(),
-                                kind: Some(lsp_types::CompletionItemKind::ENUM),
+                                kind: Some(lsp_types::CompletionItemKind::Enum),
                                 documentation: Some(lsp_types::Documentation::MarkupContent(
                                     lsp_types::MarkupContent {
                                         kind: lsp_types::MarkupKind::Markdown,
@@ -4908,7 +5041,7 @@ fn respond_to_completion(
                             });
                             completion_items.push(lsp_types::CompletionItem {
                                 label: format!("{}(..)", choice_type_name_node.value),
-                                kind: Some(lsp_types::CompletionItemKind::ENUM),
+                                kind: Some(lsp_types::CompletionItemKind::Enum),
                                 documentation: Some(lsp_types::Documentation::MarkupContent(
                                     lsp_types::MarkupContent {
                                         kind: lsp_types::MarkupKind::Markdown,
@@ -4929,7 +5062,7 @@ fn respond_to_completion(
                         {
                             completion_items.push(lsp_types::CompletionItem {
                                 label: name_node.value.to_string(),
-                                kind: Some(lsp_types::CompletionItemKind::FUNCTION),
+                                kind: Some(lsp_types::CompletionItemKind::Function),
                                 documentation: Some(lsp_types::Documentation::MarkupContent(
                                     lsp_types::MarkupContent {
                                         kind: lsp_types::MarkupKind::Markdown,
@@ -4960,7 +5093,7 @@ fn respond_to_completion(
                         {
                             completion_items.push(lsp_types::CompletionItem {
                                 label: name_node.value.to_string(),
-                                kind: Some(lsp_types::CompletionItemKind::STRUCT),
+                                kind: Some(lsp_types::CompletionItemKind::Struct),
                                 documentation: Some(lsp_types::Documentation::MarkupContent(
                                     lsp_types::MarkupContent {
                                         kind: lsp_types::MarkupKind::Markdown,
@@ -4990,7 +5123,7 @@ fn respond_to_completion(
                         if !existing_expose_names.contains(start_name_node.value.as_ref()) {
                             completion_items.push(lsp_types::CompletionItem {
                                 label: start_name_node.value.to_string(),
-                                kind: Some(lsp_types::CompletionItemKind::FUNCTION),
+                                kind: Some(lsp_types::CompletionItemKind::Function),
                                 documentation: Some(lsp_types::Documentation::MarkupContent(
                                     lsp_types::MarkupContent {
                                         kind: lsp_types::MarkupKind::Markdown,
@@ -5103,7 +5236,7 @@ fn respond_to_completion(
                                 );
                             completion_items.push(lsp_types::CompletionItem {
                                 label: choice_type_name_node.value.to_string(),
-                                kind: Some(lsp_types::CompletionItemKind::ENUM_MEMBER),
+                                kind: Some(lsp_types::CompletionItemKind::EnumMember),
                                 documentation: Some(lsp_types::Documentation::MarkupContent(
                                     lsp_types::MarkupContent {
                                         kind: lsp_types::MarkupKind::Markdown,
@@ -5126,7 +5259,7 @@ fn respond_to_completion(
                         {
                             completion_items.push(lsp_types::CompletionItem {
                                 label: name_node.value.to_string(),
-                                kind: Some(lsp_types::CompletionItemKind::FUNCTION),
+                                kind: Some(lsp_types::CompletionItemKind::Function),
                                 documentation: Some(lsp_types::Documentation::MarkupContent(
                                     lsp_types::MarkupContent {
                                         kind: lsp_types::MarkupKind::Markdown,
@@ -5158,7 +5291,7 @@ fn respond_to_completion(
                         {
                             completion_items.push(lsp_types::CompletionItem {
                                 label: name_node.value.to_string(),
-                                kind: Some(lsp_types::CompletionItemKind::STRUCT),
+                                kind: Some(lsp_types::CompletionItemKind::Struct),
                                 documentation: Some(lsp_types::Documentation::MarkupContent(
                                     lsp_types::MarkupContent {
                                         kind: lsp_types::MarkupKind::Markdown,
@@ -5190,7 +5323,7 @@ fn respond_to_completion(
                         {
                             completion_items.push(lsp_types::CompletionItem {
                                 label: start_name_node.value.to_string(),
-                                kind: Some(lsp_types::CompletionItemKind::FUNCTION),
+                                kind: Some(lsp_types::CompletionItemKind::Function),
                                 documentation: Some(lsp_types::Documentation::MarkupContent(
                                     lsp_types::MarkupContent {
                                         kind: lsp_types::MarkupKind::Markdown,
@@ -5320,7 +5453,7 @@ fn respond_to_completion(
                                     }))
                                     .map(|variant_name| lsp_types::CompletionItem {
                                         label: variant_name,
-                                        kind: Some(lsp_types::CompletionItemKind::ENUM_MEMBER),
+                                        kind: Some(lsp_types::CompletionItemKind::EnumMember),
                                         documentation: Some(
                                             lsp_types::Documentation::MarkupContent(
                                                 lsp_types::MarkupContent {
@@ -5346,7 +5479,7 @@ fn respond_to_completion(
                         {
                             completion_items.push(lsp_types::CompletionItem {
                                 label: name_node.value.to_string(),
-                                kind: Some(lsp_types::CompletionItemKind::FUNCTION),
+                                kind: Some(lsp_types::CompletionItemKind::Function),
                                 documentation: Some(lsp_types::Documentation::MarkupContent(
                                     lsp_types::MarkupContent {
                                         kind: lsp_types::MarkupKind::Markdown,
@@ -5379,7 +5512,7 @@ fn respond_to_completion(
                         {
                             completion_items.push(lsp_types::CompletionItem {
                                 label: name_node.value.to_string(),
-                                kind: Some(lsp_types::CompletionItemKind::STRUCT),
+                                kind: Some(lsp_types::CompletionItemKind::Struct),
                                 documentation: Some(lsp_types::Documentation::MarkupContent(
                                     lsp_types::MarkupContent {
                                         kind: lsp_types::MarkupKind::Markdown,
@@ -5411,7 +5544,7 @@ fn respond_to_completion(
                         ) {
                             completion_items.push(lsp_types::CompletionItem {
                                 label: start_name_node.value.to_string(),
-                                kind: Some(lsp_types::CompletionItemKind::FUNCTION),
+                                kind: Some(lsp_types::CompletionItemKind::Function),
                                 documentation: Some(lsp_types::Documentation::MarkupContent(
                                     lsp_types::MarkupContent {
                                         kind: lsp_types::MarkupKind::Markdown,
@@ -5485,7 +5618,7 @@ fn respond_to_completion(
                                 });
                             completion_items.push(lsp_types::CompletionItem {
                                 label: format!("({})", operator_node.value),
-                                kind: Some(lsp_types::CompletionItemKind::OPERATOR),
+                                kind: Some(lsp_types::CompletionItemKind::Operator),
                                 documentation: Some(lsp_types::Documentation::MarkupContent(
                                     lsp_types::MarkupContent {
                                         kind: lsp_types::MarkupKind::Markdown,
@@ -5588,7 +5721,7 @@ fn respond_to_completion(
                             {
                                 Some(vec![lsp_types::CompletionItem {
                                     label: previous_declaration_start_name_node.value.to_string(),
-                                    kind: Some(lsp_types::CompletionItemKind::FUNCTION),
+                                    kind: Some(lsp_types::CompletionItemKind::Function),
                                     documentation: None,
                                     ..lsp_types::CompletionItem::default()
                                 }])
@@ -5614,7 +5747,7 @@ fn respond_to_completion(
                         local_bindings.into_iter().map(|(_, local_binding)| {
                             lsp_types::CompletionItem {
                                 label: local_binding.name.to_string(),
-                                kind: Some(lsp_types::CompletionItemKind::VARIABLE),
+                                kind: Some(lsp_types::CompletionItemKind::Variable),
                                 documentation: Some(lsp_types::Documentation::MarkupContent(
                                     lsp_types::MarkupContent {
                                         kind: lsp_types::MarkupKind::Markdown,
@@ -5840,7 +5973,7 @@ fn respond_to_completion(
             None
         }
     };
-    maybe_completion_items.map(lsp_types::CompletionResponse::Array)
+    maybe_completion_items.map(lsp_types::CompletionResponse::CompletionItemList)
 }
 
 fn variable_declaration_completions_into(
@@ -5917,7 +6050,7 @@ fn variable_declaration_completions_into(
                             }))
                             .map(|variant_name: String| lsp_types::CompletionItem {
                                 label: variant_name,
-                                kind: Some(lsp_types::CompletionItemKind::ENUM_MEMBER),
+                                kind: Some(lsp_types::CompletionItemKind::EnumMember),
                                 documentation: Some(lsp_types::Documentation::MarkupContent(
                                     lsp_types::MarkupContent {
                                         kind: lsp_types::MarkupKind::Markdown,
@@ -5939,7 +6072,7 @@ fn variable_declaration_completions_into(
                 {
                     completion_items.push(lsp_types::CompletionItem {
                         label: name_node.value.to_string(),
-                        kind: Some(lsp_types::CompletionItemKind::FUNCTION),
+                        kind: Some(lsp_types::CompletionItemKind::Function),
                         documentation: Some(lsp_types::Documentation::MarkupContent(
                             lsp_types::MarkupContent {
                                 kind: lsp_types::MarkupKind::Markdown,
@@ -5969,7 +6102,7 @@ fn variable_declaration_completions_into(
                 if gren_expose_set_contains_variable(expose_set, &start_name_node.value) {
                     completion_items.push(lsp_types::CompletionItem {
                         label: start_name_node.value.to_string(),
-                        kind: Some(lsp_types::CompletionItemKind::FUNCTION),
+                        kind: Some(lsp_types::CompletionItemKind::Function),
                         documentation: Some(lsp_types::Documentation::MarkupContent(
                             lsp_types::MarkupContent {
                                 kind: lsp_types::MarkupKind::Markdown,
@@ -6046,7 +6179,7 @@ fn type_declaration_completions_into(
                 {
                     completion_items.push(lsp_types::CompletionItem {
                         label: name_node.value.to_string(),
-                        kind: Some(lsp_types::CompletionItemKind::ENUM),
+                        kind: Some(lsp_types::CompletionItemKind::Enum),
                         documentation: Some(lsp_types::Documentation::MarkupContent(
                             lsp_types::MarkupContent {
                                 kind: lsp_types::MarkupKind::Markdown,
@@ -6083,7 +6216,7 @@ fn type_declaration_completions_into(
                 {
                     completion_items.push(lsp_types::CompletionItem {
                         label: name_node.value.to_string(),
-                        kind: Some(lsp_types::CompletionItemKind::STRUCT),
+                        kind: Some(lsp_types::CompletionItemKind::Struct),
                         documentation: Some(lsp_types::Documentation::MarkupContent(
                             lsp_types::MarkupContent {
                                 kind: lsp_types::MarkupKind::Markdown,
@@ -6221,7 +6354,7 @@ fn respond_to_document_symbols(
         .to_file_path()
         .ok()?;
     let project_module = state_get_project_module_by_path(state, &document_path)?;
-    Some(lsp_types::DocumentSymbolResponse::Nested(
+    Some(lsp_types::DocumentSymbolResponse::DocumentSymbolList(
         project_module
             .module
             .syntax
@@ -6242,7 +6375,7 @@ fn respond_to_document_symbols(
                     Some(lsp_types::DocumentSymbol {
                         name: name_node.value.to_string(),
                         detail: None,
-                        kind: lsp_types::SymbolKind::ENUM,
+                        kind: lsp_types::SymbolKind::Enum,
                         tags: None,
                         #[allow(deprecated)]
                         deprecated: None,
@@ -6282,7 +6415,7 @@ fn respond_to_document_symbols(
                                     lsp_types::DocumentSymbol {
                                         name: variant_name_node.value.to_string(),
                                         detail: None,
-                                        kind: lsp_types::SymbolKind::ENUM_MEMBER,
+                                        kind: lsp_types::SymbolKind::EnumMember,
                                         tags: None,
                                         #[allow(deprecated)]
                                         deprecated: None,
@@ -6306,7 +6439,7 @@ fn respond_to_document_symbols(
                     Some(lsp_types::DocumentSymbol {
                         name: operator_node.value.to_string(),
                         detail: None,
-                        kind: lsp_types::SymbolKind::OPERATOR,
+                        kind: lsp_types::SymbolKind::Operator,
                         tags: None,
                         #[allow(deprecated)]
                         deprecated: None,
@@ -6324,7 +6457,7 @@ fn respond_to_document_symbols(
                     Some(lsp_types::DocumentSymbol {
                         name: name_node.value.to_string(),
                         detail: None,
-                        kind: lsp_types::SymbolKind::FUNCTION,
+                        kind: lsp_types::SymbolKind::Function,
                         tags: None,
                         #[allow(deprecated)]
                         deprecated: None,
@@ -6344,7 +6477,7 @@ fn respond_to_document_symbols(
                     Some(lsp_types::DocumentSymbol {
                         name: name_node.value.to_string(),
                         detail: None,
-                        kind: lsp_types::SymbolKind::STRUCT,
+                        kind: lsp_types::SymbolKind::Struct,
                         tags: None,
                         #[allow(deprecated)]
                         deprecated: None,
@@ -6362,7 +6495,7 @@ fn respond_to_document_symbols(
                 } => Some(lsp_types::DocumentSymbol {
                     name: start_name_node.value.to_string(),
                     detail: None,
-                    kind: lsp_types::SymbolKind::FUNCTION,
+                    kind: lsp_types::SymbolKind::Function,
                     tags: None,
                     #[allow(deprecated)]
                     deprecated: None,
@@ -6377,7 +6510,7 @@ fn respond_to_document_symbols(
 fn respond_to_code_action(
     state: &State,
     code_action_arguments: lsp_types::CodeActionParams,
-) -> Option<Vec<lsp_types::CodeActionOrCommand>> {
+) -> Option<Vec<lsp_types::CodeActionResponse>> {
     let document_path: std::path::PathBuf = code_action_arguments
         .text_document
         .uri
@@ -6444,9 +6577,9 @@ fn respond_to_code_action(
             )
             .is_none()
             {
-                lsp_types::CodeActionOrCommand::CodeAction(lsp_types::CodeAction {
+                lsp_types::CodeActionResponse::CodeAction(lsp_types::CodeAction {
                     title: "add missing import".to_string(),
-                    kind: Some(lsp_types::CodeActionKind::QUICKFIX),
+                    kind: Some(lsp_types::CodeActionKind::QuickFix),
                     diagnostics: None,
                     edit: None,
                     command: None,
@@ -6456,6 +6589,7 @@ fn respond_to_code_action(
                             .to_string(),
                     }),
                     data: None,
+                    tags: None,
                 })
             } else {
                 let maybe_before_import_insert_position: Option<lsp_types::Position> =
@@ -6490,20 +6624,22 @@ fn respond_to_code_action(
                         line: 0,
                         character: 0,
                     });
-                lsp_types::CodeActionOrCommand::CodeAction(lsp_types::CodeAction {
+                lsp_types::CodeActionResponse::CodeAction(lsp_types::CodeAction {
                     title: "add missing import".to_string(),
-                    kind: Some(lsp_types::CodeActionKind::QUICKFIX),
+                    kind: Some(lsp_types::CodeActionKind::QuickFix),
                     diagnostics: None,
                     edit: Some(lsp_types::WorkspaceEdit {
                         changes: None,
                         change_annotations: None,
-                        document_changes: Some(lsp_types::DocumentChanges::Edits(vec![
+                        document_changes: Some(vec![lsp_types::DocumentChange::TextDocumentEdit(
                             lsp_types::TextDocumentEdit {
                                 text_document: lsp_types::OptionalVersionedTextDocumentIdentifier {
-                                    uri: code_action_arguments.text_document.uri,
+                                    text_document_identifier: lsp_types::TextDocumentIdentifier {
+                                        uri: code_action_arguments.text_document.uri,
+                                    },
                                     version: None,
                                 },
-                                edits: vec![lsp_types::OneOf::Left(lsp_types::TextEdit {
+                                edits: vec![lsp_types::Edit::TextEdit(lsp_types::TextEdit {
                                     range: lsp_types::Range {
                                         start: import_insert_position,
                                         end: import_insert_position,
@@ -6511,12 +6647,13 @@ fn respond_to_code_action(
                                     new_text: format!("import {qualification}\n"),
                                 })],
                             },
-                        ])),
+                        )]),
                     }),
                     command: None,
                     is_preferred: Some(true),
                     disabled: None,
                     data: None,
+                    tags: None,
                 })
             }])
         }
@@ -6561,17 +6698,35 @@ fn gren_syntax_module_header_end_position(
             } => where_keyword_range.end,
         })
 }
-
 fn gren_make_file_problem_to_diagnostic(
     problem: &GrenMakeFileInternalCompileProblem,
+    diagnostic_message_capability: DiagnosticMessageCapability,
 ) -> lsp_types::Diagnostic {
     lsp_types::Diagnostic {
         range: problem.range,
-        severity: Some(lsp_types::DiagnosticSeverity::ERROR),
+        severity: Some(lsp_types::DiagnosticSeverity::Error),
         code: None,
         code_description: None,
         source: None,
-        message: format!("--- {} ---\n{}", &problem.title, &problem.message_markdown),
+        message: match diagnostic_message_capability {
+            DiagnosticMessageCapability::Markdown => {
+                lsp_types::Message::MarkupContent(lsp_types::MarkupContent {
+                    kind: lsp_types::MarkupKind::Markdown,
+                    value: format!(
+                        "### {}\n{}",
+                        &problem.title,
+                        gren_make_message_segments_to_diagnostic_markdown(
+                            &problem.message_markdown
+                        )
+                    ),
+                })
+            }
+            DiagnosticMessageCapability::OnlyPlainText => lsp_types::Message::String(format!(
+                "--- {} ---\n{}",
+                &problem.title,
+                gren_make_message_segments_to_diagnostic_plain(&problem.message_markdown)
+            )),
+        },
         related_information: None,
         tags: None,
         data: None,
@@ -6593,7 +6748,7 @@ fn project_module_name_completions_for_except(
                               module_name: &str,
                               module_syntax: &GrenSyntaxModule|
      -> Option<lsp_types::CompletionItem> {
-        let module_url: lsp_types::Url = lsp_types::Url::from_file_path(module_path).ok()?;
+        let module_url: lsp_types::Uri = lsp_types::Uri::from_file_path(module_path).ok()?;
         Some(lsp_types::CompletionItem {
             label: module_name.to_string(),
             insert_text: Some(
@@ -6608,7 +6763,7 @@ fn project_module_name_completions_for_except(
                     .unwrap_or(module_name)
                     .to_string(),
             ),
-            kind: Some(lsp_types::CompletionItemKind::MODULE),
+            kind: Some(lsp_types::CompletionItemKind::Module),
             documentation: Some(lsp_types::Documentation::MarkupContent(
                 lsp_types::MarkupContent {
                     kind: lsp_types::MarkupKind::Markdown,
@@ -6707,7 +6862,7 @@ fn project_module_name_completions_for_except(
         .collect::<Vec<_>>()
 }
 fn gren_syntax_module_documentation_to_markdown(
-    module_url: &lsp_types::Url,
+    module_url: &lsp_types::Uri,
     module_syntax: &GrenSyntaxModule,
     module_documentation_elements: &[GrenSyntaxNode<GrenSyntaxModuleDocumentationElement>],
 ) -> String {
@@ -6830,7 +6985,7 @@ fn gren_syntax_module_documentation_to_markdown(
 }
 fn name_as_module_module_member_markdown_link_into(
     builder: &mut String,
-    module_url: &lsp_types::Url,
+    module_url: &lsp_types::Uri,
     module_member_declaration_name_range: lsp_types::Range,
     module_member_name: &str,
 ) {
@@ -7041,20 +7196,20 @@ fn lsp_position_add_characters(
 
 fn gren_syntax_highlight_kind_to_lsp_semantic_token_type(
     gren_syntax_highlight_kind: &GrenSyntaxHighlightKind,
-) -> lsp_types::SemanticTokenType {
+) -> lsp_types::SemanticTokenTypes {
     match gren_syntax_highlight_kind {
-        GrenSyntaxHighlightKind::KeySymbol => lsp_types::SemanticTokenType::KEYWORD,
-        GrenSyntaxHighlightKind::Operator => lsp_types::SemanticTokenType::OPERATOR,
-        GrenSyntaxHighlightKind::Field => lsp_types::SemanticTokenType::PROPERTY,
-        GrenSyntaxHighlightKind::ModuleNameOrAlias => lsp_types::SemanticTokenType::NAMESPACE,
-        GrenSyntaxHighlightKind::Type => lsp_types::SemanticTokenType::TYPE,
-        GrenSyntaxHighlightKind::Variable => lsp_types::SemanticTokenType::VARIABLE,
-        GrenSyntaxHighlightKind::Variant => lsp_types::SemanticTokenType::ENUM_MEMBER,
-        GrenSyntaxHighlightKind::DeclaredVariable => lsp_types::SemanticTokenType::FUNCTION,
-        GrenSyntaxHighlightKind::Comment => lsp_types::SemanticTokenType::COMMENT,
-        GrenSyntaxHighlightKind::Number => lsp_types::SemanticTokenType::NUMBER,
-        GrenSyntaxHighlightKind::String => lsp_types::SemanticTokenType::STRING,
-        GrenSyntaxHighlightKind::TypeVariable => lsp_types::SemanticTokenType::TYPE_PARAMETER,
+        GrenSyntaxHighlightKind::KeySymbol => lsp_types::SemanticTokenTypes::Keyword,
+        GrenSyntaxHighlightKind::Operator => lsp_types::SemanticTokenTypes::Operator,
+        GrenSyntaxHighlightKind::Field => lsp_types::SemanticTokenTypes::Property,
+        GrenSyntaxHighlightKind::ModuleNameOrAlias => lsp_types::SemanticTokenTypes::Namespace,
+        GrenSyntaxHighlightKind::Type => lsp_types::SemanticTokenTypes::Type,
+        GrenSyntaxHighlightKind::Variable => lsp_types::SemanticTokenTypes::Variable,
+        GrenSyntaxHighlightKind::Variant => lsp_types::SemanticTokenTypes::EnumMember,
+        GrenSyntaxHighlightKind::DeclaredVariable => lsp_types::SemanticTokenTypes::Function,
+        GrenSyntaxHighlightKind::Comment => lsp_types::SemanticTokenTypes::Comment,
+        GrenSyntaxHighlightKind::Number => lsp_types::SemanticTokenTypes::Number,
+        GrenSyntaxHighlightKind::String => lsp_types::SemanticTokenTypes::String,
+        GrenSyntaxHighlightKind::TypeVariable => lsp_types::SemanticTokenTypes::TypeParameter,
     }
 }
 
