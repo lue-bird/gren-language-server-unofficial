@@ -1246,43 +1246,41 @@ fn update_state_with_configuration(
                 })
             }
         });
-    if let Some(compiler_executable) = new_gren_path {
-        let mut gren_version_command: std::process::Command =
-            std::process::Command::new(compiler_executable);
-        gren_version_command.stdin(std::process::Stdio::null());
-        gren_version_command.stdout(std::process::Stdio::piped());
-        gren_version_command.stderr(std::process::Stdio::piped());
-        gren_version_command.arg("--version");
-        match gren_version_command.spawn() {
+    let mut gren_version_command: std::process::Command =
+        std::process::Command::new(new_gren_path.as_ref().unwrap_or("gren"));
+    gren_version_command.stdin(std::process::Stdio::null());
+    gren_version_command.stdout(std::process::Stdio::piped());
+    gren_version_command.stderr(std::process::Stdio::piped());
+    gren_version_command.arg("--version");
+    match gren_version_command.spawn() {
+        Err(error) => {
+            eprintln!(
+                "I tried to run {} but it failed: {error}. Try installing gren via `npm install -g gren-lang`.",
+                format!("{gren_version_command:?}").replace('"', "")
+            );
+        }
+        Ok(gren_version_process) => match gren_version_process.wait_with_output() {
             Err(error) => {
                 eprintln!(
-                    "I tried to run {} but it failed: {error}. Try installing gren via `npm install -g gren-lang`.",
+                    "I wasn't able to read the output of {}: {error}",
                     format!("{gren_version_command:?}").replace('"', "")
                 );
             }
-            Ok(gren_version_process) => match gren_version_process.wait_with_output() {
+            Ok(gren_make_output) => match str::from_utf8(&gren_make_output.stdout) {
                 Err(error) => {
                     eprintln!(
-                        "I wasn't able to read the output of {}: {error}",
+                        "I wasn't able to decode the output of {} as a string: {error}",
                         format!("{gren_version_command:?}").replace('"', "")
                     );
                 }
-                Ok(gren_make_output) => match str::from_utf8(&gren_make_output.stdout) {
-                    Err(error) => {
-                        eprintln!(
-                            "I wasn't able to decode the output of {} as a string: {error}",
-                            format!("{gren_version_command:?}").replace('"', "")
-                        );
-                    }
-                    Ok(gren_version) => {
-                        // since the version string is tiny
-                        // and it is leaked only once usually
-                        // this is perfectly fine
-                        state.gren_version = Box::leak(Box::from(gren_version.trim()));
-                    }
-                },
+                Ok(gren_version) => {
+                    // since the version string is tiny
+                    // and it is leaked only once usually
+                    // this is perfectly fine
+                    state.gren_version = Box::leak(Box::from(gren_version.trim()));
+                }
             },
-        }
+        },
     }
     match &state.configured {
         ConfiguredState::Received => {}
