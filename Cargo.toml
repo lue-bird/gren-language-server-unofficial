@@ -83,3 +83,6 @@ missing_const_for_fn = { level = "allow" }
 branches_sharing_code = { level = "allow" }
 equatable_if_let = { level = "allow" }
 useless_let_if_seq = { level = "allow" }
+# sucks for traits
+redundant_closure_for_method_calls = { level = "allow" }
+bool_to_int_with_if = { level = "allow" }

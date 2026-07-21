@@ -729,7 +729,8 @@ fn update_state_on_did_change_text_document(
                         updated_source = new_text.text;
                     }
                     lsp_types::TextDocumentContentChangeEvent::TextDocumentContentChangePartial(change) => {
-                        match { #[allow(deprecated)] change.range_length } {
+                        let range_length = { #[allow(deprecated)] change.range_length };
+                        match range_length {
                             // zed for example does not send a range length
                             None => {
                                 string_replace_lsp_range(&mut updated_source, change.range, &change.text);
@@ -1136,7 +1137,7 @@ fn parse_gren_make_file_internal_compile_problem(
         message_markdown: message,
     })
 }
-fn parse_gren_make_path<'a>(json: &'a serde_json::Value) -> Result<&'a str, String> {
+fn parse_gren_make_path(json: &serde_json::Value) -> Result<&str, String> {
     serde_json::Value::as_str(json)
         .or_else(|| serde_json::Value::as_null(json).map(|()| ""))
         .map(|path| if path.is_empty() { "gren.json" } else { path })
@@ -1192,7 +1193,7 @@ fn parse_gren_make_message_segment(
     json: &serde_json::Value,
 ) -> Result<GrenMakeMessageSegment, String> {
     match json {
-        serde_json::Value::String(plain) => Ok(GrenMakeMessageSegment::Plain(plain.to_string())),
+        serde_json::Value::String(plain) => Ok(GrenMakeMessageSegment::Plain(plain.clone())),
         serde_json::Value::Object(fields_json) => {
             let text: &str = fields_json
                 .get("string")
@@ -3897,7 +3898,7 @@ fn respond_to_rename(
                     }
                 }
             };
-            renames(state, symbol_to_rename, rename_arguments.new_name)
+            renames(state, symbol_to_rename, &rename_arguments.new_name)
         }
         GrenSyntaxSymbol::ModuleHeaderExpose {
             name: to_rename_declaration_name,
@@ -3929,7 +3930,7 @@ fn respond_to_rename(
                         including_declaration_name: true,
                     }
                 };
-            renames(state, symbol_to_rename, rename_arguments.new_name)
+            renames(state, symbol_to_rename, &rename_arguments.new_name)
         }
         GrenSyntaxSymbol::ImportExpose {
             origin_module: to_rename_import_expose_origin_module,
@@ -3950,7 +3951,7 @@ fn respond_to_rename(
                         including_declaration_name: true,
                     }
                 };
-            renames(state, symbol_to_rename, rename_arguments.new_name)
+            renames(state, symbol_to_rename, &rename_arguments.new_name)
         }
         GrenSyntaxSymbol::VariableOrVariantOrOperator {
             qualification: to_rename_qualification,
@@ -3974,7 +3975,7 @@ fn respond_to_rename(
                     name: to_rename_name,
                     including_declaration_name: true,
                 };
-            renames(state, symbol_to_rename, rename_arguments.new_name)
+            renames(state, symbol_to_rename, &rename_arguments.new_name)
         }
         GrenSyntaxSymbol::Type {
             qualification: to_rename_qualification,
@@ -3996,14 +3997,14 @@ fn respond_to_rename(
                 name: type_name_to_rename,
                 including_declaration_name: true,
             };
-            renames(state, symbol_to_rename, rename_arguments.new_name)
+            renames(state, symbol_to_rename, &rename_arguments.new_name)
         }
     })
 }
 fn renames(
     state: &State,
     symbol: GrenSymbolToReference,
-    new_name: String,
+    new_name: &str,
 ) -> Vec<lsp_types::DocumentChange> {
     state_iter_all_modules(state)
         .filter_map(|project_module| {
@@ -4025,7 +4026,7 @@ fn renames(
                 return None;
             }
             let gren_module_uri: lsp_types::Uri =
-                lsp_types::Uri::from_file_path(&project_module.module_path).ok()?;
+                lsp_types::Uri::from_file_path(project_module.module_path).ok()?;
             Some(lsp_types::DocumentChange::TextDocumentEdit(
                 lsp_types::TextDocumentEdit {
                     text_document: lsp_types::OptionalVersionedTextDocumentIdentifier {
@@ -4039,7 +4040,7 @@ fn renames(
                         .map(|use_range_of_renamed_module| {
                             lsp_types::Edit::TextEdit(lsp_types::TextEdit {
                                 range: use_range_of_renamed_module,
-                                new_text: new_name.clone(),
+                                new_text: new_name.to_string(),
                             })
                         })
                         .collect::<Vec<_>>(),
@@ -8441,7 +8442,7 @@ fn gren_syntax_comments_in_range(
     let comments_after_start_end_inclusive_index: usize = comments[comments_in_range_start_index..]
         .binary_search_by(|comment_node| comment_node.range.end.cmp(&range.end))
         .unwrap_or_else(|i| i);
-    &comments
+    comments
         .get(
             comments_in_range_start_index
                 ..(comments_in_range_start_index + comments_after_start_end_inclusive_index),
@@ -9214,7 +9215,7 @@ fn gren_syntax_pattern_parenthesized_if_space_separated_into(
             gren_syntax_pattern_parenthesized_if_space_separated_into(
                 so_far,
                 gren_syntax_node_unbox(in_parens),
-            )
+            );
         }
         GrenSyntaxPattern::As { .. }
         | GrenSyntaxPattern::Variant {
@@ -10607,7 +10608,7 @@ fn gren_syntax_let_declaration_into(
                         } else {
                             so_far.push(' ');
                         }
-                        so_far.push_str("=");
+                        so_far.push('=');
                         linebreak_indented_into(so_far, next_indent(indent));
                     }
                 }
@@ -12600,22 +12601,24 @@ fn gren_syntax_declaration_find_symbol_at_position<'a>(
                             return Some(found_symbol);
                         }
                     }
-                    let mut local_bindings = Vec::new();
-                    for parameter_node in parameters {
-                        gren_syntax_pattern_bindings_for_scope_into(
-                            &mut local_bindings,
-                            maybe_result.as_ref().map(gren_syntax_node_as_ref),
-                            gren_syntax_node_as_ref(parameter_node),
-                        );
-                    }
-                    let result_or_local_bindings = match maybe_result {
-                        None => std::ops::ControlFlow::Continue(local_bindings),
-                        Some(result_node) => gren_syntax_expression_find_symbol_at_position(
-                            local_bindings,
-                            gren_syntax_declaration_node.value,
-                            gren_syntax_node_as_ref(result_node),
-                            position,
-                        ),
+                    let result_or_local_bindings = {
+                        let mut local_bindings = Vec::new();
+                        for parameter_node in parameters {
+                            gren_syntax_pattern_bindings_for_scope_into(
+                                &mut local_bindings,
+                                maybe_result.as_ref().map(gren_syntax_node_as_ref),
+                                gren_syntax_node_as_ref(parameter_node),
+                            );
+                        }
+                        match maybe_result {
+                            None => std::ops::ControlFlow::Continue(local_bindings),
+                            Some(result_node) => gren_syntax_expression_find_symbol_at_position(
+                                local_bindings,
+                                gren_syntax_declaration_node.value,
+                                gren_syntax_node_as_ref(result_node),
+                                position,
+                            ),
+                        }
                     };
                     match result_or_local_bindings {
                         std::ops::ControlFlow::Break(result) => Some(result),
