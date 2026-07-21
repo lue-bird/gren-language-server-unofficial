@@ -1247,7 +1247,7 @@ fn update_state_with_configuration(
             }
         });
     let mut gren_version_command: std::process::Command =
-        std::process::Command::new(new_gren_path.as_ref().unwrap_or("gren"));
+        std::process::Command::new(new_gren_path.unwrap_or("gren"));
     gren_version_command.stdin(std::process::Stdio::null());
     gren_version_command.stdout(std::process::Stdio::piped());
     gren_version_command.stderr(std::process::Stdio::piped());
